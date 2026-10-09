@@ -49,6 +49,11 @@ _SCHEMA = (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS trading_lease (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        holder TEXT NOT NULL,
+        until_ms INTEGER NOT NULL
+    )""",
 )
 
 
@@ -127,6 +132,26 @@ class SqliteJournal:
                 " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
                 [(k, json.dumps(v, default=str, sort_keys=True)) for k, v in state.items()],
             )
+
+    def acquire_lease(self, holder: str, now_ms: int, ttl_ms: int) -> bool:
+        """One runner at a time, on every OS: a row with an expiry, taken in
+        one transaction. An expired lease (a crashed run) can be taken over."""
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT holder, until_ms FROM trading_lease WHERE id = 1").fetchone()
+            if row is not None and row[0] != holder and int(row[1]) > now_ms:
+                return False
+            conn.execute(
+                "INSERT INTO trading_lease (id, holder, until_ms) VALUES (1, ?, ?)"
+                " ON CONFLICT (id) DO UPDATE SET holder = excluded.holder,"
+                " until_ms = excluded.until_ms",
+                (holder, now_ms + ttl_ms),
+            )
+            return True
+
+    def release_lease(self, holder: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM trading_lease WHERE id = 1 AND holder = ?", (holder,))
 
     def load(self, key: str) -> Any:
         with self._conn() as conn:

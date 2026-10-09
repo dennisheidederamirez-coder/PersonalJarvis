@@ -77,6 +77,9 @@ class DemoTrader:
     #: simulated execution faults: called with the client id, returns a reason
     #: to fail the order (e.g. a venue rejection or timeout) or None
     execution_fault: Callable[[str], str | None] | None = None
+    #: journal a "no_signal" / "hold" record with the strategy's reason for
+    #: every bar it does not act on (paper runs; backtests leave it off)
+    explain_no_signal: bool = False
     _pending: dict[str, _Pending] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ api
@@ -131,6 +134,13 @@ class DemoTrader:
             )
         if self.risk.state.kill_switch:
             self._queue_flatten(ts, "kill switch")
+            if self.explain_no_signal:
+                self.journal.record(
+                    "no_signal",
+                    ts,
+                    sym,
+                    {"reason": f"kill switch on: {self.risk.state.kill_reason}"},
+                )
             return
         if not decide:
             return
@@ -143,12 +153,34 @@ class DemoTrader:
             target = owner.decide(i, pos.side)
             if target is not None:
                 self._handle_target(series, ts, c, owner, target)
+            elif self.explain_no_signal:
+                self.journal.record(
+                    "hold", ts, sym, {"strategy": owner.name, "reason": _why(owner, i, pos.side)}
+                )
             return
         candidates: list[Candidate] = []
         for strategy in books:
             target = strategy.decide(i, None)
             if target is not None and target.side is not None:
                 candidates.append((strategy, target))
+            elif self.explain_no_signal:
+                halted = self.risk.state.halted_day is not None and (
+                    self.risk.state.halted_day == self.risk.state.day
+                )
+                self.journal.record(
+                    "no_signal",
+                    ts,
+                    sym,
+                    {
+                        "strategy": strategy.name,
+                        "reason": _why(strategy, i, None),
+                        **(
+                            {"note": "daily loss limit reached: entries would be refused"}
+                            if halted
+                            else {}
+                        ),
+                    },
+                )
         ordered = rank(series, i, candidates) if rank is not None else candidates
         for strategy, target in ordered:
             if self._handle_target(series, ts, c, strategy, target):
@@ -432,6 +464,11 @@ class DemoTrader:
         self.journal.record("trade", ts, sym, trade.to_dict())
         if self.on_trade is not None:
             self.on_trade(trade)
+
+
+def _why(strategy: Strategy, i: int, current: Side | None) -> str:
+    explain = getattr(strategy, "explain", None)
+    return str(explain(i, current)) if callable(explain) else "no signal from the strategy rules"
 
 
 def _fill_dict(fill: Any) -> dict[str, Any]:

@@ -120,6 +120,7 @@ class PaperRunner:
                 leverage={s.id: LeverageGrant(spec.leverage) for s in streams},
                 max_volume_share=spec.max_volume_share,
                 execution_fault=execution_fault,
+                explain_no_signal=True,
             )
             saved = journal.load(f"account:{cand}")
             if saved is not None:
@@ -133,6 +134,7 @@ class PaperRunner:
     def step(self) -> StepReport:
         now = self.now_ms()
         report = StepReport(now)
+        waiting: dict[str, str] = {}
         events: list[tuple[int, str, StreamSpec, BarSeries, int, Strategy]] = []
         for stream in self.spec.streams:
             data = self.provider(stream, now)
@@ -160,6 +162,11 @@ class PaperRunner:
                 continue
             last = self.last_bar.get(stream.id)
             new = [k for k in closed if last is None or int(series.ts[k]) > last]
+            if last is not None and not new:
+                waiting[stream.id] = (
+                    f"no new closed bar since {_iso(last)}; next close "
+                    f"{_iso(last + 2 * series.interval_ms)}"
+                )
             if last is None:
                 # first step: history is only indicator warm-up; start at the newest bar
                 new = new[-1:]
@@ -199,8 +206,36 @@ class PaperRunner:
             )
             report.processed[sid] = report.processed.get(sid, 0) + 1
         self.data_status = {s.id: report.skipped.get(s.id, "ok") for s in self.spec.streams}
+        notes: list[tuple[str, int, str, dict[str, Any]]] = []
+        for stream in self.spec.streams:
+            if stream.id in report.skipped:
+                notes.append(
+                    (
+                        "no_signal",
+                        now,
+                        stream.symbol,
+                        {"stream": stream.id, "reason": f"data: {report.skipped[stream.id]}"},
+                    )
+                )
+            elif stream.id in waiting:
+                notes.append(
+                    (
+                        "waiting",
+                        now,
+                        stream.symbol,
+                        {"stream": stream.id, "reason": waiting[stream.id]},
+                    )
+                )
         self.journal.commit(
-            [("step", now, "*", {"processed": report.processed, "skipped": report.skipped})],
+            [
+                *notes,
+                (
+                    "step",
+                    now,
+                    "*",
+                    {"processed": report.processed, "skipped": report.skipped, "waiting": waiting},
+                ),
+            ],
             {"data_status": self.data_status, "spec_digest": self.digest},
         )
         return report

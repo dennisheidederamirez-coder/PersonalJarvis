@@ -129,6 +129,12 @@ class HigherTimeframeFilter:
         trend[valid & (fi < si)] = -1
         self._trend = trend
 
+    def explain(self, i: int, current: Side | None) -> str:
+        inner = getattr(self.inner, "explain", None)
+        trend = {1: "up", -1: "down"}.get(int(self._trend[i]), "undecided")
+        base = inner(i, current) if inner else "no signal"
+        return f"{base}; higher-timeframe trend {trend}"
+
     def decide(self, i: int, current: Side | None) -> Target | None:
         target = self.inner.decide(i, current)
         if target is None or target.side is None:

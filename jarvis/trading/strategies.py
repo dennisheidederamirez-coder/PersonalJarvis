@@ -125,6 +125,23 @@ class SmaCross(_AtrExits):
                 return Target(None, reason="fast SMA crossed below slow SMA")
         return None
 
+    def explain(self, i: int, current: Side | None) -> str:
+        """Why ``decide`` returned no target at bar ``i`` (read-only)."""
+        if i < 1 or not _finite(
+            float(self._fast[i]),
+            float(self._slow[i]),
+            float(self._fast[i - 1]),
+            float(self._slow[i - 1]),
+        ):
+            return f"warming up: fewer than {self.slow} bars of history"
+        f, s = float(self._fast[i]), float(self._slow[i])
+        side = "above" if f > s else "below"
+        held = f"; holding {current.value}" if current else ""
+        return (
+            f"no SMA crossover: SMA{self.fast} {f:.6g} {side} SMA{self.slow} {s:.6g} "
+            f"since before this bar{held}"
+        )
+
 
 class DonchianBreakout(_AtrExits):
     """Breakout: enter on a close beyond the prior ``entry_n``-bar range, leave
@@ -175,6 +192,21 @@ class DonchianBreakout(_AtrExits):
             return Target(None, reason=f"close rose above the {self.exit_n}-bar high")
         return None
 
+    def explain(self, i: int, current: Side | None) -> str:
+        """Why ``decide`` returned no target at bar ``i`` (read-only)."""
+        c, up, down = float(self._close[i]), float(self._up[i]), float(self._down[i])
+        if not _finite(c, up, down):
+            return f"warming up: fewer than {self.entry_n} bars of history"
+        if current is not None:
+            return (
+                f"holding {current.value}: close {c:.6g} inside the {self.exit_n}-bar exit channel"
+            )
+        where = (c - down) / (up - down) if up > down else 0.0
+        return (
+            f"no breakout: close {c:.6g} inside the {self.entry_n}-bar range "
+            f"{down:.6g}-{up:.6g} ({where:.0%} of it)"
+        )
+
 
 class RsiReversion(_AtrExits):
     """Mean reversion: buy oversold, sell overbought; leave when RSI is back at 50."""
@@ -221,6 +253,14 @@ class RsiReversion(_AtrExits):
         if (current is Side.LONG and r >= 50) or (current is Side.SHORT and r <= 50):
             return Target(None, reason="RSI back at 50")
         return None
+
+    def explain(self, i: int, current: Side | None) -> str:
+        r = float(self._rsi[i])
+        if not math.isfinite(r):
+            return f"warming up: fewer than {self.n} bars of history"
+        if current is not None:
+            return f"holding {current.value}: RSI {r:.0f} not yet back at 50"
+        return f"no extreme: RSI {r:.0f} between {self.low:.0f} and {self.high:.0f}"
 
 
 class AlwaysFlat:
