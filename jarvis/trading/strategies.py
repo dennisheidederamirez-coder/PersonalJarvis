@@ -87,7 +87,7 @@ class SmaCross(_AtrExits):
         if fast >= slow:
             raise ValueError("fast must be shorter than slow")
         self.name = name or "sma_cross"
-        self.params = {
+        self.params: Mapping[str, Any] = {
             "fast": fast,
             "slow": slow,
             "stop_atr": stop_atr,
@@ -142,7 +142,7 @@ class DonchianBreakout(_AtrExits):
         name: str | None = None,
     ) -> None:
         self.name = name or "donchian_breakout"
-        self.params = {
+        self.params: Mapping[str, Any] = {
             "entry_n": entry_n,
             "exit_n": exit_n,
             "stop_atr": stop_atr,
@@ -192,7 +192,7 @@ class RsiReversion(_AtrExits):
         name: str | None = None,
     ) -> None:
         self.name = name or "rsi_reversion"
-        self.params = {
+        self.params: Mapping[str, Any] = {
             "n": n,
             "low": low,
             "high": high,

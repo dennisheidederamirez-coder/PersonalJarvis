@@ -10,6 +10,7 @@ Costs are charged on every fill so results are never flattered:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from jarvis.trading.instruments import Instrument
 from jarvis.trading.leverage import liquidation_price
@@ -21,9 +22,10 @@ class CostModel:
     fee_rate: float = 0.0005  # 0.05 % taker per fill
     slippage_bps: float = 5.0  # 0.05 % adverse per fill
     funding_rate_8h: float = 0.0001  # 0.01 % per 8 h, longs pay
+    spread_bps: float = 0.0  # quoted spread; a taker pays half of it per fill
 
     def fill_price(self, price: float, buy: bool) -> float:
-        s = self.slippage_bps / 10_000
+        s = (self.slippage_bps + self.spread_bps / 2) / 10_000
         return price * (1 + s) if buy else price * (1 - s)
 
 
@@ -49,6 +51,19 @@ class Position:
 
     def unrealized(self, mark: float) -> float:
         return self.side.sign * (mark - self.entry) * self.qty
+
+    def to_dict(self) -> dict[str, Any]:
+        out = {f: getattr(self, f) for f in self.__dataclass_fields__}
+        out["instrument"] = self.instrument.symbol
+        out["side"] = self.side.value
+        return out
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], instruments: dict[str, Instrument]) -> Position:
+        values = dict(data)
+        values["instrument"] = instruments[values["instrument"]]
+        values["side"] = Side(values["side"])
+        return cls(**values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +113,11 @@ class PaperBroker:
     costs: CostModel = field(default_factory=CostModel)
     positions: dict[str, Position] = field(default_factory=dict)
     cash: float = 0.0  # realized equity
+    #: per-symbol costs (e.g. slippage by liquidity); others use ``costs``
+    symbol_costs: dict[str, CostModel] = field(default_factory=dict)
+
+    def costs_for(self, symbol: str) -> CostModel:
+        return self.symbol_costs.get(symbol, self.costs)
 
     def __post_init__(self) -> None:
         if self.capital <= 0:
@@ -121,8 +141,9 @@ class PaperBroker:
     ) -> Fill:
         if instrument.symbol in self.positions:
             raise RuntimeError("position already open")  # the risk manager prevents this
-        fill = self.costs.fill_price(price, buy=side is Side.LONG)
-        fee = abs(fill * qty) * self.costs.fee_rate
+        costs = self.costs_for(instrument.symbol)
+        fill = costs.fill_price(price, buy=side is Side.LONG)
+        fee = abs(fill * qty) * costs.fee_rate
         slip = abs(fill - price) * qty
         self.cash -= fee
         self.positions[instrument.symbol] = Position(
@@ -142,7 +163,7 @@ class PaperBroker:
             leverage=leverage,
             margin=abs(fill * qty) / leverage,
             liquidation=(
-                liquidation_price(side, fill, qty, leverage, mmr=mmr, fee_rate=self.costs.fee_rate)
+                liquidation_price(side, fill, qty, leverage, mmr=mmr, fee_rate=costs.fee_rate)
                 if leverage > 1
                 else None
             ),
@@ -161,8 +182,9 @@ class PaperBroker:
             fee = max(0.0, pos.margin + gross)  # the remaining margin is forfeited
             slip = 0.0
         else:
-            fill = self.costs.fill_price(price, buy=pos.side is Side.SHORT)
-            fee = abs(fill * pos.qty) * self.costs.fee_rate
+            costs = self.costs_for(symbol)
+            fill = costs.fill_price(price, buy=pos.side is Side.SHORT)
+            fee = abs(fill * pos.qty) * costs.fee_rate
             slip = abs(fill - price) * pos.qty
             gross = pos.side.sign * (fill - pos.entry) * pos.qty
         self.cash += gross - fee
@@ -196,7 +218,9 @@ class PaperBroker:
         pos = self.positions.get(symbol)
         if pos is None or hours <= 0:
             return 0.0
-        amount = pos.side.sign * abs(pos.qty * mark) * self.costs.funding_rate_8h * hours / 8
+        amount = (
+            pos.side.sign * abs(pos.qty * mark) * self.costs_for(symbol).funding_rate_8h * hours / 8
+        )
         pos.funding += amount
         self.cash -= amount
         return amount
@@ -210,6 +234,19 @@ class PaperBroker:
         pos.funding += amount
         self.cash -= amount
         return amount
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "capital": self.capital,
+            "cash": self.cash,
+            "positions": {s: p.to_dict() for s, p in self.positions.items()},
+        }
+
+    def restore(self, data: dict[str, Any], instruments: dict[str, Instrument]) -> None:
+        self.cash = float(data["cash"])
+        self.positions = {
+            s: Position.from_dict(p, instruments) for s, p in data.get("positions", {}).items()
+        }
 
     def equity(self, marks: dict[str, float]) -> float:
         return self.cash + sum(

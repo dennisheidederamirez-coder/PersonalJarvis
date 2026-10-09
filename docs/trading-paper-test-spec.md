@@ -42,8 +42,18 @@ parameters differ from it.
 - **Fees:** 0.05 % taker per fill.
 - **Slippage by liquidity tier:** 5 bps (BTC, ETH, SOL) and 8 bps (XRP, BNB).
 - **Funding:** the venue's observed payments, charged at their real times.
-- **Account:** 10 000 USD virtual. The candidates share one account and the
-  one risk manager.
+- **Accounts:** 10 000 USD virtual **per candidate**, each with the full,
+  unchanged risk limits.
+
+  This changes the first draft, which had one shared account. In a shared
+  account candidate A's BTC position would block candidate B's (one
+  position per instrument), and the evaluation of each would depend on the
+  other.
+- **Spread:** 2 bps quoted; a taker pays half of it per fill.
+- **Liquidity cap:** an order may use at most 1 % of the previous closed
+  bar's volume; otherwise it is cancelled.
+- **Execution faults:** simulated failures (e.g. a venue rejection or a
+  timeout) cancel the order and are journaled.
 
 ## 3. Risk (unchanged)
 
@@ -136,3 +146,73 @@ Scalping strategies validated on trade-level simulation
 (`docs/trading-scalping.md`) can join the same framework as further
 strategies in the book. Each gets its own pre-registration, success
 criteria and test count, and is evaluated separately.
+
+## 10. Infrastructure (built, not active)
+
+- **`jarvis/trading/paper_spec.py`:** the frozen specification
+  (`DEFAULT_SPEC`) and its SHA-256 digest.
+  - Markets are admitted by the spec, not by a global flag.
+  - Validation refuses leverage other than 1x, more than 0.5 % risk per
+    trade, or looser loss limits.
+- **`jarvis/trading/paper_runner.py`:** `PaperRunner.step()` processes every
+  bar closed since the last step, through the existing engine, risk manager
+  and paper broker. Its safeguards:
+  - spec-hash lock;
+  - closed bars only;
+  - stale or disputed data blocks the stream;
+  - exactly-once processing per stream, with catch-up after pauses;
+  - one atomic transaction per bar for journal and account state, so a
+    crash redoes the bar and never doubles it;
+  - deterministic order ids, remembered across restarts.
+
+  `status()` / `status_text()` report, per candidate:
+  - equity, cash and return;
+  - drawdown now and the maximum;
+  - kill switch and daily halt;
+  - open positions;
+  - trade counts and whether the strategy is evaluable yet;
+  - per-strategy profit factor, average R, net result and fees;
+  - data status per stream.
+- **`jarvis/market_data/paper_feed.py`:** `StoreProvider` reads the local
+  cache and cross-checks the primary against the backup. `update()` fetches
+  only newly closed bars and funding.
+- **`python -m jarvis.market_data.paper_step`:** one manual step.
+  - **offline by default**;
+  - `--fetch` pulls new closed bars first (a few public requests);
+  - `--status-only` prints the report;
+  - `--expect <hash>` enforces the pre-registration.
+
+  Nothing schedules itself.
+
+Verified offline: 147 tests over trading and market data, including:
+
+- catch-up equals stepping;
+- a fresh process every day plus two crashes before commit equals an
+  uninterrupted run;
+- stale data pauses entries and is caught up once;
+- disputed sources block decisions;
+- execution faults and the liquidity cap;
+- a spec change cannot continue an existing test.
+
+Six negative controls each made a test fail. A dry run on the recorded
+data behaved as specified: the daily streams warmed up, and the 4h stream
+was refused because the cache was 5 bars old.
+
+## 11. Still missing for continuous paper operation
+
+1. **Owner approval of this specification and its hash** (the start of the
+   test).
+2. **A data refresh before every step.** Either `--fetch`, with periodic
+   keyless public requests (about 12 a day for all streams), or an
+   approved scheduled job.
+3. **A scheduled job** in the Jarvis scheduler, a few minutes after each 4h
+   and daily close. It is not built on purpose, and it needs approval.
+4. **Read-only REST and CLI views** in the app, plus the owner-only kill
+   switch, and a weekly report. Briefing or Telegram summaries come only
+   with approval and after the Ops core (PR #499) lands.
+5. **Owner-reviewed evaluation**, once 40 trades per strategy exist.
+
+Scalping streams (1m–5m) fit the same runner as further `StreamSpec`
+entries. They become possible only once the trade-level simulator and the
+data decisions in `docs/trading-scalping.md` are in place; no extra
+connection is opened before then.

@@ -24,8 +24,29 @@ def price(ts: int, venue: str) -> float:
     return 30_000 * (1 + 0.05 * math.sin(ts / (50 * HOUR))) * OFFSET[venue]
 
 
-def _bar(ts: int, venue: str) -> tuple[float, float, float, float, float]:
-    o, c = price(ts, venue), price(ts + HOUR, venue)
+_STEP = {
+    "1": 60_000,
+    "3": 180_000,
+    "5": 300_000,
+    "15": 900_000,
+    "60": HOUR,
+    "240": 4 * HOUR,
+    "D": 24 * HOUR,
+    "1m": 60_000,
+    "3m": 180_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "1h": HOUR,
+    "4h": 4 * HOUR,
+    "1d": 24 * HOUR,
+    "1H": HOUR,
+    "4H": 4 * HOUR,
+    "1Dutc": 24 * HOUR,
+}
+
+
+def _bar(ts: int, venue: str, step: int = HOUR) -> tuple[float, float, float, float, float]:
+    o, c = price(ts, venue), price(ts + step, venue)
     return o, max(o, c) * 1.001, min(o, c) * 0.999, c, 100.0 + (ts // HOUR) % 7
 
 
@@ -40,12 +61,13 @@ class FakeExchanges:
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
 
-    def _hours(self, start: int, end: int) -> list[int]:
+    def _hours(self, start: int, end: int, step: int = HOUR) -> list[int]:
+        """Bar open times on a ``step`` grid that have STARTED by now."""
         first = max(start, self.listed_from)
-        first -= first % HOUR
+        first -= first % step
         if first < start:
-            first += HOUR
-        return [t for t in range(first, end + 1, HOUR) if t <= self.now_ms]
+            first += step
+        return [t for t in range(first, end + 1, step) if t <= self.now_ms]
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(request.url.path)
@@ -72,9 +94,15 @@ class FakeExchanges:
 
     # --------------------------------------------------------------- bybit
     def _bybit_kline(self, q: dict[str, str]) -> Any:
-        ts = self._hours(int(q["start"]), int(q["end"]))[: int(q["limit"])]
+        step = _STEP[q["interval"]]
+        ts = self._hours(int(q["start"]), int(q["end"]), step)[: int(q["limit"])]
         rows = [
-            [str(t), *[f"{v:.2f}" for v in _bar(t, "bybit")[:4]], str(_bar(t, "bybit")[4]), "0"]
+            [
+                str(t),
+                *[f"{v:.2f}" for v in _bar(t, "bybit", step)[:4]],
+                str(_bar(t, "bybit", step)[4]),
+                "0",
+            ]
             for t in ts
         ]
         return {"retCode": 0, "result": {"list": rows[::-1]}}
@@ -111,11 +139,12 @@ class FakeExchanges:
     # ----------------------------------------------------------------- okx
     def _okx_candles(self, q: dict[str, str]) -> Any:
         after, before = int(q["after"]), int(q["before"])
-        ts = [t for t in self._hours(before + 1, after - 1)][-int(q["limit"]) :]
+        step = _STEP[q["bar"]]
+        ts = [t for t in self._hours(before + 1, after - 1, step)][-int(q["limit"]) :]
         rows = []
         for t in ts[::-1]:
-            o, h, lo, c, v = _bar(t, "okx")
-            confirm = "0" if t + HOUR > self.now_ms else "1"
+            o, h, lo, c, v = _bar(t, "okx", step)
+            confirm = "0" if t + step > self.now_ms else "1"
             rows.append(
                 [str(t), f"{o}", f"{h}", f"{lo}", f"{c}", str(v * 100), str(v), "0", confirm]
             )
@@ -139,10 +168,11 @@ class FakeExchanges:
 
     # ------------------------------------------------------------- binance
     def _binance_klines(self, q: dict[str, str], venue: str) -> Any:
-        ts = self._hours(int(q["startTime"]), int(q["endTime"]))[: int(q["limit"])]
+        step = _STEP[q["interval"]]
+        ts = self._hours(int(q["startTime"]), int(q["endTime"]), step)[: int(q["limit"])]
         out = []
         for t in ts:
-            o, h, lo, c, v = _bar(t, venue)
+            o, h, lo, c, v = _bar(t, venue, step)
             out.append(
                 [
                     t,
@@ -151,7 +181,7 @@ class FakeExchanges:
                     str(lo),
                     str(c),
                     str(v),
-                    t + HOUR - 1,
+                    t + step - 1,
                     "0",
                     10,
                     str(v * 0.6),
@@ -175,9 +205,10 @@ class FakeExchanges:
     def _coinbase(self, q: dict[str, str]) -> Any:
         start = int(datetime.fromisoformat(q["start"]).timestamp() * 1000)
         end = int(datetime.fromisoformat(q["end"]).timestamp() * 1000)
-        ts = self._hours(start, end)[:300]
+        step = int(q["granularity"]) * 1000
+        ts = self._hours(start, end, step)[:300]
         rows = []
         for t in ts[::-1]:
-            o, h, lo, c, v = _bar(t, "coinbase")
+            o, h, lo, c, v = _bar(t, "coinbase", step)
             rows.append([t // 1000, lo, h, o, c, v])
         return rows

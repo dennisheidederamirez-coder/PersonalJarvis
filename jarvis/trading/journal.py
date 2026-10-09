@@ -45,7 +45,22 @@ _SCHEMA = (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         state TEXT NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS trading_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )""",
 )
+
+
+class BufferJournal:
+    """Collects one step's entries; ``SqliteJournal.commit`` writes them
+    together with the state, in one transaction."""
+
+    def __init__(self) -> None:
+        self.entries: list[tuple[str, int, str, dict[str, Any]]] = []
+
+    def record(self, kind: str, ts_ms: int, symbol: str, data: dict[str, Any]) -> None:
+        self.entries.append((kind, ts_ms, symbol, dict(data)))
 
 
 class SqliteJournal:
@@ -92,6 +107,32 @@ class SqliteJournal:
             rows = cur.fetchall()
         return [(int(ts), k, s, json.loads(d)) for ts, k, s, d in rows]
 
+    def commit(
+        self,
+        entries: list[tuple[str, int, str, dict[str, Any]]],
+        state: dict[str, Any],
+    ) -> None:
+        """Entries and state in ONE transaction: after a crash either both are
+        there or neither, so a step is never half-applied or doubled."""
+        with self._conn() as conn:
+            conn.executemany(
+                "INSERT INTO trading_journal (ts_ms, kind, symbol, data) VALUES (?, ?, ?, ?)",
+                [
+                    (int(ts), k, s, json.dumps(d, default=str, sort_keys=True))
+                    for k, ts, s, d in entries
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO trading_state (key, value) VALUES (?, ?)"
+                " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                [(k, json.dumps(v, default=str, sort_keys=True)) for k, v in state.items()],
+            )
+
+    def load(self, key: str) -> Any:
+        with self._conn() as conn:
+            row = conn.execute("SELECT value FROM trading_state WHERE key = ?", (key,)).fetchone()
+        return json.loads(row[0]) if row else None
+
     def save_state(self, state: RiskState) -> None:
         with self._conn() as conn:
             conn.execute(
@@ -106,4 +147,4 @@ class SqliteJournal:
         return RiskState.from_dict(json.loads(row[0])) if row else None
 
 
-__all__ = ["Journal", "MemoryJournal", "SqliteJournal"]
+__all__ = ["BufferJournal", "Journal", "MemoryJournal", "SqliteJournal"]

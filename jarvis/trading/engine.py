@@ -29,7 +29,7 @@ from jarvis.trading.leverage import LeverageGrant
 from jarvis.trading.metrics import by_strategy, by_year, compute
 from jarvis.trading.paper import CostModel, PaperBroker, Trade
 from jarvis.trading.risk import Account, EntryRequest, OpenPosition, RiskLimits, RiskManager
-from jarvis.trading.strategies import Strategy, Target
+from jarvis.trading.strategies import Side, Strategy, Target
 
 MAX_RISK_GROWTH = 1.5  # an entry is cancelled if its stop risk grew beyond this at the open
 
@@ -65,7 +65,18 @@ class DemoTrader:
     #: Inside their span they are charged at their real times; outside it the
     #: cost model's constant rate applies and the result says "assumed".
     funding_rates: dict[int, float] | None = None
+    #: per-symbol observed funding for accounts that trade several markets
+    funding_by_symbol: dict[str, dict[int, float]] = field(default_factory=dict)
     _funding_ts: Any = None
+    _funding_ts_by: dict[str, Any] = field(default_factory=dict)
+    #: quote volume of each instrument's last CLOSED bar (known before the next open)
+    last_volume: dict[str, float] = field(default_factory=dict)
+    #: an order may use at most this share of the previous bar's quote volume
+    #: (None: no liquidity cap — backtests of liquid majors)
+    max_volume_share: float | None = None
+    #: simulated execution faults: called with the client id, returns a reason
+    #: to fail the order (e.g. a venue rejection or timeout) or None
+    execution_fault: Callable[[str], str | None] | None = None
     _pending: dict[str, _Pending] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ api
@@ -105,6 +116,7 @@ class DemoTrader:
         self._execute_pending(series, ts, o)
         self._check_exits(sym, ts, o, h, lo)
         self.marks[sym] = c
+        self.last_volume[sym] = float(series.volume[i]) * c
         self._funding(sym, ts, c, series.interval_ms)
         for event in self.risk.observe(ts, self.equity()):
             self.journal.record(
@@ -142,24 +154,100 @@ class DemoTrader:
             if self._handle_target(series, ts, c, strategy, target):
                 break
 
-    def funding_span(self) -> tuple[int, int] | None:
-        if not self.funding_rates:
+    def snapshot(self) -> dict[str, Any]:
+        """Everything needed to continue after a restart (journal excluded)."""
+        pending = {}
+        for sym, p in self._pending.items():
+            entry = None
+            if p.entry is not None:
+                e = p.entry
+                entry = {
+                    "client_id": e.client_id,
+                    "instrument": e.instrument.symbol,
+                    "side": e.side.value,
+                    "reference_price": e.reference_price,
+                    "stop": e.stop,
+                    "take_profit": e.take_profit,
+                    "leverage": e.leverage.leverage,
+                }
+            pending[sym] = {
+                "close_reason": p.close_reason,
+                "close_id": p.close_id,
+                "entry": entry,
+                "qty": p.qty,
+                "planned_risk": p.planned_risk,
+                "reason": p.reason,
+                "strategy": p.strategy,
+            }
+        return {
+            "broker": self.broker.snapshot(),
+            "risk": self.risk.state.to_dict(),
+            "marks": dict(self.marks),
+            "last_volume": dict(self.last_volume),
+            "pending": pending,
+        }
+
+    def restore(self, data: Mapping[str, Any], instruments: dict[str, Any]) -> None:
+        from jarvis.trading.risk import RiskState
+
+        self.broker.restore(data["broker"], instruments)
+        self.risk.state = RiskState.from_dict(data["risk"])
+        self.marks = dict(data.get("marks", {}))
+        self.last_volume = dict(data.get("last_volume", {}))
+        self._pending = {}
+        for sym, p in data.get("pending", {}).items():
+            e = p.get("entry")
+            entry = None
+            if e is not None:
+                grant = self.leverage.get(p.get("strategy", ""), LeverageGrant())
+                if grant.leverage != e["leverage"]:
+                    grant = LeverageGrant(e["leverage"])
+                entry = EntryRequest(
+                    e["client_id"],
+                    instruments[e["instrument"]],
+                    Side(e["side"]),
+                    e["reference_price"],
+                    e["stop"],
+                    e["take_profit"],
+                    grant,
+                )
+            self._pending[sym] = _Pending(
+                p["close_reason"],
+                p["close_id"],
+                entry,
+                p["qty"],
+                p["planned_risk"],
+                p["reason"],
+                p["strategy"],
+            )
+
+    def _rates(self, sym: str | None) -> dict[int, float] | None:
+        if sym is not None and sym in self.funding_by_symbol:
+            return self.funding_by_symbol[sym]
+        return self.funding_rates
+
+    def funding_span(self, sym: str | None = None) -> tuple[int, int] | None:
+        rates = self._rates(sym)
+        if not rates:
             return None
-        return min(self.funding_rates), max(self.funding_rates)
+        return min(rates), max(rates)
 
     def _funding(self, sym: str, ts: int, mark: float, interval_ms: int) -> None:
-        span = self.funding_span()
+        rates = self._rates(sym)
+        span = self.funding_span(sym)
         # a payment covers the funding interval before it: observed coverage
         # reaches one interval before the first and after the last payment
         if span is None or not span[0] - 8 * HOUR_MS <= ts <= span[1] + 8 * HOUR_MS:
             self.broker.accrue_funding(sym, mark, interval_ms / HOUR_MS)  # assumption
             return
-        if self._funding_ts is None:
-            self._funding_ts = np.asarray(sorted(self.funding_rates or {}), dtype=np.int64)
-        lo = int(np.searchsorted(self._funding_ts, ts, side="left"))
-        hi = int(np.searchsorted(self._funding_ts, ts + interval_ms, side="left"))
-        for t in self._funding_ts[lo:hi]:
-            self.broker.charge_funding(sym, mark, (self.funding_rates or {})[int(t)])
+        stamps = self._funding_ts_by.get(sym)
+        if stamps is None or len(stamps) != len(rates or {}):
+            stamps = np.asarray(sorted(rates or {}), dtype=np.int64)
+            self._funding_ts_by[sym] = stamps
+        lo = int(np.searchsorted(stamps, ts, side="left"))
+        hi = int(np.searchsorted(stamps, ts + interval_ms, side="left"))
+        for t in stamps[lo:hi]:
+            self.broker.charge_funding(sym, mark, (rates or {})[int(t)])
 
     def close_all(self, ts: int, reason: str) -> None:
         for sym in list(self.broker.positions):
@@ -266,6 +354,31 @@ class DemoTrader:
                 {
                     "client_id": req.client_id,
                     "reason": "gapped through the stop" if gapped else "risk grew at the open",
+                },
+            )
+            return
+        cap = self.max_volume_share
+        prior = self.last_volume.get(sym)
+        if cap is not None and (prior is None or pending.qty * open_ > cap * prior):
+            self.journal.record(
+                "cancelled",
+                ts,
+                sym,
+                {
+                    "client_id": req.client_id,
+                    "reason": "insufficient liquidity (order above the volume cap)",
+                },
+            )
+            return
+        fault = self.execution_fault(req.client_id) if self.execution_fault else None
+        if fault:
+            self.journal.record(
+                "execution_failed",
+                ts,
+                sym,
+                {
+                    "client_id": req.client_id,
+                    "reason": fault,
                 },
             )
             return
