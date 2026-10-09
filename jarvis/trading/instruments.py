@@ -76,7 +76,7 @@ SOL_USD: Final = coin("SOL", 1e-2)
 XRP_USD: Final = coin("XRP", 1.0)
 BNB_USD: Final = coin("BNB", 1e-3)
 LINK_USD: Final = coin("LINK", 1e-1)
-#: The owner's explicit priority altcoins for the next analysis phase. HYPE
+#: Priority altcoins for the next analysis phase. HYPE
 #: started trading in late November 2024: its history is short and every
 #: test must start at its real listing, never earlier.
 HYPE_USD: Final = coin("HYPE", 1e-2)

@@ -131,3 +131,19 @@ def test_the_package_has_no_network_exchange_credential_or_model_path() -> None:
                 )
         text = path.read_text(encoding="utf-8").lower()
         assert "get_secret" not in text and "api_key" not in text, path.name
+
+
+def test_a_few_real_extreme_moves_do_not_spoil_a_long_series() -> None:
+    import dataclasses
+
+    long = random_walk(17_520, seed=12)
+    m = np.ones(len(long))
+    for k in range(1000, 17_000, 1500):  # 11 fat-tail gaps, as in real hourly crypto data
+        m[k:] *= 1.08
+    spiky = dataclasses.replace(long, open=long.open * m, high=long.high * m,
+                                low=long.low * m, close=long.close * m)
+    q = assess(spiky)
+    assert q.bad_bars == 0 and q.outliers >= 8
+    assert q.grade == "good" and "extreme moves" in " ".join(q.notes)
+    short = spiky.slice(0, 1600)
+    assert assess(short).score < q.score  # the same moves weigh more in a short series

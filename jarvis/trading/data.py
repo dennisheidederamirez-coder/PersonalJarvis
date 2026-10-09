@@ -158,7 +158,10 @@ def assess(series: BarSeries) -> DataQuality:
     coverage = (n - duplicates) / expected if expected else 0.0
     score = coverage
     score -= 0.5 * min(1.0, zero_volume / n)
-    score -= 0.05 * min(10, outliers)
+    # Extreme moves are judged by their SHARE: crypto has fat tails, so a long
+    # series carries some real ones. Whether a move is real or an error is
+    # settled by comparing independent venues (market_data.crosscheck).
+    score -= min(0.3, 20.0 * outliers / n)
     score = max(0.0, min(1.0, score))
     if out_of_order or bad_bars:
         grade = "unusable"
