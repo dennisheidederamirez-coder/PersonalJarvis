@@ -43,6 +43,9 @@ class BarSeries:
     volume: FloatArray
     source: str
     retrieved_at: str  # ISO-8601 UTC
+    #: base volume bought by aggressive (taker) buyers per bar, when the venue
+    #: reports it (e.g. Binance klines); None otherwise. Feeds the CVD.
+    taker_buy: FloatArray | None = None
 
     def __len__(self) -> int:
         return int(self.ts.shape[0])
@@ -60,6 +63,7 @@ class BarSeries:
             self.volume[sl],
             self.source,
             self.retrieved_at,
+            None if self.taker_buy is None else self.taker_buy[sl],
         )
 
     @property
@@ -74,8 +78,11 @@ def make_series(
     *,
     source: str,
     retrieved_at: str | None = None,
+    taker_buy: list[float] | None = None,
 ) -> BarSeries:
     arr = np.asarray(rows, dtype=np.float64).reshape(-1, 6)
+    if taker_buy is not None and len(taker_buy) != len(arr):
+        raise ValueError("taker_buy must have one value per bar")
     return BarSeries(
         instrument,
         interval_ms,
@@ -87,6 +94,7 @@ def make_series(
         arr[:, 5].copy(),
         source,
         retrieved_at or datetime.now(UTC).isoformat(timespec="seconds"),
+        None if taker_buy is None else np.asarray(taker_buy, dtype=np.float64),
     )
 
 

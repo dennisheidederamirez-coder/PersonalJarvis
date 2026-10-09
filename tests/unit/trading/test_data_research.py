@@ -105,6 +105,8 @@ FORBIDDEN_IMPORTS = {
     "http.client",
     "jarvis.core.secrets",
     "keyring",
+    "jarvis.core.http_pool",
+    "jarvis.market_data",  # data arrives as BarSeries; the network layer stays outside
     # models: a trade decision must come from tested rules, never from an AI opinion
     "anthropic",
     "openai",

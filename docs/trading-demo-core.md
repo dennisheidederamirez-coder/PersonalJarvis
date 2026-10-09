@@ -103,7 +103,7 @@ Every step is off by default, gets tests, negative controls and a regression
 run, and needs the owner's approval where it says so.
 
 1. **Demo core (this package).** Offline, deterministic, no network. ✅
-2. **Market data.** First a shortlist of free, keyless sources with licence, limits and reliability; the owner chooses. Then a read-only adapter outside this package that uses the shared HTTP pool and jittered retries (AP-33), caches bars, and hands over a `BarSeries` with provenance. Funding rates and open interest come from public exchange endpoints, if chosen.
+2. **Market data.** Adapters for Bybit (primary), OKX (backup), Binance REST and Coinbase (reference) with a local cache and a cross-check are built and offline-tested ([Market data](trading-market-data.md)). A real backfill needs the owner's approval. Then a read-only adapter outside this package that uses the shared HTTP pool and jittered retries (AP-33), caches bars, and hands over a `BarSeries` with provenance. Funding rates and open interest come from public exchange endpoints, if chosen.
 3. **Research agent.** The deterministic snapshot plus news and macro sources once approved. Commentary from a society agent (e.g. a Hermes runtime) only on a subscription or local model (`background_policy`), never on a per-token key, with no network or order tools.
 4. **Paper-trading service.** A scheduled demo run through the existing scheduler, trading only a strategy whose verdict is `trade`. Read-only REST and CLI views for status, journal and metrics; an owner-only kill switch.
 5. **Jarvis integration** (after the Ops core lands):
