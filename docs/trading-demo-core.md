@@ -26,6 +26,7 @@ objectively over time.
 | `validation` | Anchored walk-forward. Parameters are chosen in-sample, and only out-of-sample trades count. The edge verdict needs enough trades, a minimum profit factor, positive expectancy after costs and a bootstrap test whose significance level is divided by the number of strategy families compared. **No supported edge → no trade.** |
 | `metrics` | Trades, hit rate, profit factor, expectancy, average R, fees, slippage, funding, maximum drawdown, Sharpe, Sortino. |
 | `journal` | Every decision, approval, rejection, cancellation, fill, trade and risk event, in memory or SQLite. The SQLite journal also persists the risk state (kill switch, seen order ids). |
+| `signals`, `signal_eval` | External signals (e.g. TradingView alerts) as validated, deduplicated evidence, and an event study against random timing. See [External signals](trading-external-signals.md). |
 
 Defaults (`RiskLimits`):
 

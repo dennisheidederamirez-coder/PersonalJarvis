@@ -105,4 +105,62 @@ def realized_vol(close: FloatArray, n: int, periods_per_year: float) -> FloatArr
     return out
 
 
-__all__ = ["atr", "ema", "prior_high", "prior_low", "realized_vol", "rsi", "sma", "true_range"]
+def pvsra(
+    open_: FloatArray,
+    high: FloatArray,
+    low: FloatArray,
+    close: FloatArray,
+    volume: FloatArray,
+    n: int = 10,
+) -> NDArray[np.int8]:
+    """PVSRA candle classes from the publicly documented rule set
+    (an independent implementation, not a copy of any published script):
+
+    - ``2`` / ``-2`` climax bull / bear: volume >= 200 % of the average of
+      the previous ``n`` bars, or spread x volume >= the highest of the
+      previous ``n`` bars;
+    - ``1`` / ``-1`` above-average bull / bear: volume >= 150 % of that average;
+    - ``0`` normal (also while fewer than ``n`` bars of history exist).
+
+    Bull/bear is the candle's colour (close >= open). Verify against the chart
+    before relying on it: published versions differ in details.
+    """
+    out = np.zeros(len(close), dtype=np.int8)
+    sv = (high - low) * volume
+    for i in range(n, len(close)):
+        avg = float(np.mean(volume[i - n : i]))
+        bull = close[i] >= open_[i]
+        if volume[i] >= 2.0 * avg or sv[i] >= float(np.max(sv[i - n : i])):
+            out[i] = 2 if bull else -2
+        elif volume[i] >= 1.5 * avg:
+            out[i] = 1 if bull else -1
+    return out
+
+
+def daily_open(
+    ts_ms: NDArray[np.int64], open_: FloatArray, *, utc_offset_ms: int = 0
+) -> FloatArray:
+    """The open of the first bar of each (UTC, or offset) day, carried forward."""
+    out = np.full(len(open_), np.nan)
+    day_ms = 86_400_000
+    current_day, value = None, float("nan")
+    for i, t in enumerate(ts_ms):
+        day = (int(t) + utc_offset_ms) // day_ms
+        if day != current_day:
+            current_day, value = day, float(open_[i])
+        out[i] = value
+    return out
+
+
+__all__ = [
+    "atr",
+    "daily_open",
+    "ema",
+    "prior_high",
+    "prior_low",
+    "pvsra",
+    "realized_vol",
+    "rsi",
+    "sma",
+    "true_range",
+]
