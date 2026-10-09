@@ -77,8 +77,8 @@ def test_the_job_is_off_until_enabled_for_this_exact_spec(tmp_path: Path) -> Non
     s = Setup(tmp_path)
     assert s.job.run_once().status == "disabled" and s.made == 0 and s.fake.calls == []
     with pytest.raises(SpecError):
-        s.job.enable("0" * 64, "owner")
-    s.job.enable(DEFAULT_SPEC.digest(), "owner")
+        s.job.enable("0" * 64, "owner", days=14)
+    s.job.enable(DEFAULT_SPEC.digest(), "owner", days=14)
     assert s.job.enabled()
     s.job.disable("owner")
     assert s.job.run_once().status == "disabled" and s.made == 0
@@ -86,7 +86,7 @@ def test_the_job_is_off_until_enabled_for_this_exact_spec(tmp_path: Path) -> Non
 
 def test_runs_fetch_step_and_report_once_per_day(tmp_path: Path) -> None:
     s = Setup(tmp_path)
-    s.job.enable(DEFAULT_SPEC.digest(), "owner")
+    s.job.enable(DEFAULT_SPEC.digest(), "owner", days=14)
     first = s.job.run_once()
     assert first.status == "ran" and first.requests > 0 and len(first.processed) == 6
     assert first.report_path and Path(first.report_path).exists()
@@ -101,7 +101,7 @@ def test_runs_fetch_step_and_report_once_per_day(tmp_path: Path) -> None:
 
 def test_one_run_at_a_time_and_a_crashed_lease_expires(tmp_path: Path) -> None:
     s = Setup(tmp_path)
-    s.job.enable(DEFAULT_SPEC.digest(), "owner")
+    s.job.enable(DEFAULT_SPEC.digest(), "owner", days=14)
     assert s.journal.acquire_lease("other-host:1", s.now[0], LEASE_TTL_MS)
     assert s.job.run_once().status == "busy" and s.made == 0
     s.now[0] += LEASE_TTL_MS + 1  # the other run crashed and never released
@@ -110,7 +110,7 @@ def test_one_run_at_a_time_and_a_crashed_lease_expires(tmp_path: Path) -> None:
 
 def test_the_daily_request_budget_stops_fetching(tmp_path: Path) -> None:
     s = Setup(tmp_path)
-    s.job.enable(DEFAULT_SPEC.digest(), "owner")
+    s.job.enable(DEFAULT_SPEC.digest(), "owner", days=14)
     day = datetime.fromtimestamp(s.now[0] / 1000, UTC).date().isoformat()
     s.journal.commit([], {"request_budget": {day: MAX_REQUESTS_PER_DAY}})
     result = s.job.run_once()

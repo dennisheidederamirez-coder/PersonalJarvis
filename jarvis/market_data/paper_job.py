@@ -43,6 +43,22 @@ MAX_REQUESTS_PER_RUN: Final = 40
 MAX_REQUESTS_PER_DAY: Final = 300
 
 
+def code_fingerprint() -> str:
+    """SHA-256 over the source of the trading and market-data packages."""
+    import hashlib
+
+    import jarvis.market_data as md
+    import jarvis.trading as tr
+
+    h = hashlib.sha256()
+    for pkg in (tr, md):
+        root = Path(str(pkg.__file__)).parent
+        for path in sorted(root.glob("*.py")):
+            h.update(f"{pkg.__name__}/{path.name}\n".encode())
+            h.update(path.read_bytes())
+    return h.hexdigest()
+
+
 def next_run(after: datetime) -> datetime:
     """The next scheduled slot strictly after *after* (UTC)."""
     t = after.astimezone(UTC).replace(second=0, microsecond=0)
@@ -82,13 +98,29 @@ class PaperJob:
 
     # ------------------------------------------------------------ owner switch
 
-    def enable(self, approved_digest: str, approved_by: str) -> None:
+    def enable(
+        self, approved_digest: str, approved_by: str, *, days: int, code: str | None = None
+    ) -> dict[str, Any]:
+        """Enable for exactly this spec, for ``days`` days, for exactly this code.
+
+        After ``days`` the job switches itself off. If the trading or
+        market-data code changes (``code_fingerprint``), it refuses to run:
+        a changed program would make it a different test."""
         if approved_digest != self.spec.digest():
             raise SpecError("approval is for a different specification")
-        self.journal.commit(
-            [("job_enabled", self.now_ms(), "*", {"by": approved_by, "digest": approved_digest})],
-            {"job": {"enabled": True, "digest": approved_digest, "by": approved_by}},
-        )
+        if not 1 <= days <= 90:
+            raise SpecError("a test window is 1-90 days")
+        now = self.now_ms()
+        job = {
+            "enabled": True,
+            "digest": approved_digest,
+            "by": approved_by,
+            "from_ms": now,
+            "until_ms": now + days * 86_400_000,
+            "code": code or code_fingerprint(),
+        }
+        self.journal.commit([("job_enabled", now, "*", job)], {"job": job})
+        return job
 
     def disable(self, by: str) -> None:
         self.journal.commit(
@@ -96,15 +128,37 @@ class PaperJob:
         )
 
     def enabled(self) -> bool:
+        return self._gate(self.now_ms())[0] == "ok"
+
+    def _gate(self, now: int) -> tuple[str, str]:
         job = self.journal.load("job") or {}
-        return bool(job.get("enabled")) and job.get("digest") == self.spec.digest()
+        if not job.get("enabled"):
+            return "disabled", "the owner has not enabled the job"
+        if job.get("digest") != self.spec.digest():
+            return "disabled", "enabled for a different specification"
+        if "until_ms" in job and now >= int(job["until_ms"]):
+            return "expired", "the approved test window has ended"
+        if "code" in job and job["code"] != code_fingerprint():
+            return "code_changed", "the trading code differs from the approved version"
+        return "ok", ""
 
     # ------------------------------------------------------------------- run
 
     def run_once(self, *, fetch: bool = True) -> RunResult:
         now = self.now_ms()
-        if not self.enabled():
-            return RunResult("disabled", notes=["the owner has not enabled the job for this spec"])
+        gate, why = self._gate(now)
+        if gate == "expired":
+            job = dict(self.journal.load("job") or {})
+            job["enabled"] = False
+            self.journal.commit(
+                [("job_expired", now, "*", {"until_ms": job.get("until_ms")})], {"job": job}
+            )
+            return RunResult("expired", notes=[why])
+        if gate == "code_changed":
+            self.journal.commit([("job_refused", now, "*", {"reason": why})], {})
+            return RunResult("code_changed", notes=[why])
+        if gate != "ok":
+            return RunResult("disabled", notes=[why])
         if not self.journal.acquire_lease(self.holder, now, LEASE_TTL_MS):
             return RunResult("busy", notes=["another run holds the lease"])
         result = RunResult("ran")
@@ -176,6 +230,9 @@ class PaperJob:
 
 
 __all__ = [
+    "code_fingerprint",
+    "launchd_plist",
+    "main",
     "LEASE_TTL_MS",
     "MAX_REQUESTS_PER_DAY",
     "MAX_REQUESTS_PER_RUN",
@@ -184,3 +241,136 @@ __all__ = [
     "RunResult",
     "next_run",
 ]
+
+
+# --------------------------------------------------------------- operations
+
+
+def launchd_plist(
+    python: str,
+    workdir: str,
+    store: str,
+    journal: str,
+    reports: str,
+    log: str,
+    label: str = "local.jarvis.paper-test",
+) -> str:
+    """A macOS LaunchAgent that calls ``run`` at the six slots (local file,
+    user scope). Generated for review — installing it is the activation step.
+    launchd runs a slot missed during sleep once on wake; the runner catches
+    up every closed bar exactly once either way."""
+    from datetime import datetime as _dt
+
+    offset_min = int(_dt.now().astimezone().utcoffset().total_seconds() // 60)  # type: ignore[union-attr]
+    slots = []
+    for hour in SLOT_HOURS:
+        local = (hour * 60 + SLOT_DELAY_MIN + offset_min) % (24 * 60)
+        slots.append(
+            f"    <dict><key>Hour</key><integer>{local // 60}</integer>"
+            f"<key>Minute</key><integer>{local % 60}</integer></dict>"
+        )
+    args = [
+        python,
+        "-m",
+        "jarvis.market_data.paper_job",
+        "--store",
+        store,
+        "--journal",
+        journal,
+        "--reports",
+        reports,
+        "run",
+    ]
+    arg_xml = "\n".join(f"    <string>{a}</string>" for a in args)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{label}</string>
+  <key>WorkingDirectory</key><string>{workdir}</string>
+  <key>ProgramArguments</key>
+  <array>
+{arg_xml}
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+{chr(10).join(slots)}
+  </array>
+  <key>StandardOutPath</key><string>{log}</string>
+  <key>StandardErrorPath</key><string>{log}</string>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>
+"""
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    import json
+    import time
+
+    from jarvis.market_data.adapters import make_adapter
+    from jarvis.trading.paper_spec import DEFAULT_SPEC
+
+    ap = argparse.ArgumentParser(prog="python -m jarvis.market_data.paper_job")
+    ap.add_argument("--store", required=True, type=Path)
+    ap.add_argument("--journal", required=True, type=Path)
+    ap.add_argument("--reports", type=Path, default=None)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("status")
+    sub.add_parser("run")
+    en = sub.add_parser("enable")
+    en.add_argument("--digest", required=True)
+    en.add_argument("--days", type=int, required=True)
+    en.add_argument("--by", required=True)
+    dis = sub.add_parser("disable")
+    dis.add_argument("--by", required=True)
+    args = ap.parse_args(argv)
+
+    job = PaperJob(
+        DEFAULT_SPEC,
+        BarStore(args.store),
+        SqliteJournal(args.journal),
+        lambda: {n: make_adapter(n) for n in ("binance", "okx")},
+        now_ms=lambda: int(time.time() * 1000),
+        reports_dir=args.reports,
+    )
+    if args.cmd == "enable":
+        print(json.dumps(job.enable(args.digest, args.by, days=args.days), indent=1))
+    elif args.cmd == "disable":
+        job.disable(args.by)
+        print("disabled")
+    elif args.cmd == "run":
+        r = job.run_once()
+        print(
+            json.dumps(
+                {
+                    "status": r.status,
+                    "processed": r.processed,
+                    "skipped": r.skipped,
+                    "requests": r.requests,
+                    "report": r.report_path,
+                    "notes": r.notes,
+                }
+            )
+        )
+    else:
+        state = job.journal.load("job") or {}
+        gate, why = job._gate(job.now_ms())
+        print(
+            json.dumps(
+                {
+                    "gate": gate,
+                    "why": why,
+                    "job": state,
+                    "code_now": code_fingerprint(),
+                    "next_run_utc": next_run(datetime.now(UTC)).isoformat(),
+                },
+                indent=1,
+            )
+        )
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

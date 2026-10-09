@@ -120,3 +120,88 @@ needs PR #499.
    Telegram stays off unless approved separately.
 5. **Who may lift a kill switch** and how the owner is told (a local report
    by default).
+
+## 14-day activation plan (prepared, not executed)
+
+**Shared portfolio risk manager: not required for this test.**
+
+- The two candidates run in separate virtual accounts by design. Each has
+  the full limits: open risk ≤ 1.5 % (A) and ≤ 0.5 % (B, one market).
+- Together that is at most about 2 % of the combined 20 000 virtual capital
+  at the stops.
+- A BTC overlap between A and B is possible and visible in the report's
+  "all accounts together" section.
+- The portfolio layer (`docs/trading-portfolio-risk.md`) becomes necessary
+  once strategies share one account or capital.
+
+**Isolation.** The test must not change while it runs:
+
+1. **Frozen code:** export the approved commit with `git archive` into its
+   own folder (e.g. `~/pj-paper-run/`). That is not a working copy, so
+   nobody can switch its branch.
+2. **Own Python environment** in that folder, with the versions used in
+   testing (numpy 2.1.3, httpx 0.28.1). This is a one-time install from
+   PyPI, free.
+3. **`enable` runs from that folder**, so the stored code fingerprint is
+   the frozen one. Any later change to that folder refuses every run
+   ("code changed").
+4. **Fresh journal** `~/pj-trading-data/paper_test_2_auto.sqlite`. The
+   manual step 1 stays in its own journal as a record, because it ran
+   before the reason journaling existed.
+
+**Schedule.**
+
+- A user LaunchAgent (`launchd_plist()`; no admin rights, no app change)
+  runs `paper_job run` at 00:05, 04:05, …, 20:05 UTC. The generator writes
+  these as local times.
+- The Spain clock change on 2026-10-25 shifts the slots by one hour in
+  UTC. They still come after each close, so this is harmless.
+- `RunAtLoad` is off. The first run is the next slot after activation, and
+  it only warms up (the newest closed bar per stream).
+
+**Window.**
+
+- `enable --days 14` sets `until_ms`. The first run after that journals
+  `job_expired` and switches itself off; every later run does nothing.
+- The LaunchAgent is then removed. That removal is cleanup, not a safety
+  requirement.
+
+**Checks.**
+
+- Before activation:
+  - full test suite green;
+  - spec hash verified;
+  - code fingerprint of the frozen folder recorded;
+  - `paper_job status` shows `gate: ok`, the window and the next slot.
+- Daily: the Markdown report (`~/pj-trading-data/paper-reports/`) with:
+  - runs (expected 6);
+  - requests;
+  - data status;
+  - reasons for untraded bars;
+  - accounts, positions and costs.
+- After 14 days: a final report with every trade, non-trade, data error
+  and result.
+
+**Fallbacks.**
+
+| Problem | What happens |
+|---|---|
+| Mac asleep or off | missed slots are caught up exactly once at the next run |
+| Venue down / errors | fetch errors journaled; the step runs on the cache; stale streams skip |
+| Primary and backup disagree | that stream makes no decision until they agree again |
+| Two runs at once | lease: the second returns "busy" |
+| A run crashes | the bar is redone at the next run, never doubled; the lease expires after 15 min |
+| Code or spec changed | every run refused and journaled |
+| Account drawdown 10 % | kill switch: positions closed, no entries until the owner resets |
+| Owner wants to stop | `paper_job disable --by owner` (takes effect at once), then remove the LaunchAgent |
+
+**Activation steps, after approval.**
+
+1. Create the frozen folder and its environment from the approved commit;
+   run the tests there.
+2. Show the spec hash and the code fingerprint.
+3. `paper_job enable --digest <hash> --days 14 --by owner`.
+4. Install and load the LaunchAgent (user scope).
+5. Report the result: `status` output, next slot, the LaunchAgent loaded.
+
+Steps 4 and 5 are the actual start.

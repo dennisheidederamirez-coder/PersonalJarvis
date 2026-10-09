@@ -91,6 +91,28 @@ def daily_report(runner: PaperRunner, day: date) -> dict[str, Any]:
             "open_positions": open_pos,
             "not_traded_because": {k: dict(v) for k, v in sorted(reasons.items())},
         }
+    runs = [d for ts, k, _s, d in rows if k == "job_run" and lo <= ts < hi]
+    out["operations"] = {
+        "job_runs": len(runs),
+        "expected_runs": 6,
+        "requests": sum(int(d.get("requests", 0)) for d in runs),
+        "notes": sorted({n for d in runs for n in d.get("notes", [])}),
+        "refusals": [
+            k for ts, k, _s, _d in rows if k in ("job_refused", "job_expired") and lo <= ts < hi
+        ],
+    }
+    accounts = out["candidates"].values()
+    out["combined"] = {
+        "equity": round(sum(c["equity"] for c in accounts), 2),
+        "open_risk_at_stops": round(
+            sum(p["risk_at_stop"] for c in accounts for p in c["open_positions"]), 2
+        ),
+        "same_symbol_overlap": sorted(
+            sym
+            for sym in {p["symbol"] for c in accounts for p in c["open_positions"]}
+            if sum(1 for c in accounts for p in c["open_positions"] if p["symbol"] == sym) > 1
+        ),
+    }
     return out
 
 
@@ -125,6 +147,28 @@ def to_markdown(report: dict[str, Any]) -> str:
                 for reason, n in reasons.items():
                     lines.append(f"  - {key}: {reason}" + (f" (x{n})" if n > 1 else ""))
         lines.append("")
+    ops, comb = report.get("operations", {}), report.get("combined", {})
+    if ops:
+        lines += [
+            "## Operations",
+            f"- job runs {ops['job_runs']} of {ops['expected_runs']} slots, requests "
+            f"{ops['requests']}",
+        ]
+        lines += [f"- note: {n}" for n in ops["notes"]]
+        lines += [f"- {r}" for r in ops["refusals"]]
+        lines.append("")
+    if comb:
+        lines += [
+            "## All accounts together",
+            f"- equity {comb['equity']:.2f}; open risk at the stops "
+            f"{comb['open_risk_at_stops']:.2f}"
+            + (
+                f"; same market in two accounts: {', '.join(comb['same_symbol_overlap'])}"
+                if comb["same_symbol_overlap"]
+                else ""
+            ),
+            "",
+        ]
     lines.append("## Data")
     lines += [f"- {k}: {v}" for k, v in sorted(report["data"].items())]
     return "\n".join(lines) + "\n"
