@@ -216,3 +216,34 @@ Scalping streams (1m–5m) fit the same runner as further `StreamSpec`
 entries. They become possible only once the trade-level simulator and the
 data decisions in `docs/trading-scalping.md` are in place; no extra
 connection is opened before then.
+
+## 12. Risks of a later shared portfolio
+
+The test runs one account per candidate. Before candidates (or later
+scalping strategies) share one account, these risks need explicit rules:
+
+- **Correlation:** BTC, ETH, SOL, XRP and BNB move together most of the
+  time. A market-wide move can trigger breakouts on all five in the same
+  bar. The correlated-risk cap (1 % same direction) then admits only the
+  first ones; *which* ones depends on the processing order, which biases
+  the results unless it is defined (e.g. by validated edge or liquidity).
+- **Same instrument:** two strategies on BTC compete for one position slot.
+  Without separate slots or netting rules, one strategy's trade silently
+  blocks the other's, and neither record shows what it would have done.
+- **Shared limits:** one daily loss halt and one kill switch stop every
+  strategy for a loss caused by one. The evaluation of each strategy then
+  depends on the others.
+- **Capital and exposure:** the 1.0x gross-exposure and 3-position caps are
+  shared, so a strategy that is often in the market crowds out the others.
+- **Execution:** several fills in the same bar on correlated markets, so
+  slippage and liquidity are not independent.
+- **Attribution:** results stay per strategy (`by_strategy`), but
+  drawdown and risk are only meaningful for the whole account.
+
+Options when the time comes:
+
+- per-strategy risk budgets inside one account;
+- a defined priority order;
+- a portfolio-level correlation model in place of the conservative
+  "unknown correlation counts as full";
+- a shadow record of rejected entries, so blocked trades stay measurable.
