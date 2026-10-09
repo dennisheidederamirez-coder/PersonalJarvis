@@ -201,6 +201,16 @@ class PaperBroker:
         self.cash -= amount
         return amount
 
+    def charge_funding(self, symbol: str, mark: float, rate: float) -> float:
+        """One observed funding payment at *rate* (longs pay a positive rate)."""
+        pos = self.positions.get(symbol)
+        if pos is None:
+            return 0.0
+        amount = pos.side.sign * abs(pos.qty * mark) * rate
+        pos.funding += amount
+        self.cash -= amount
+        return amount
+
     def equity(self, marks: dict[str, float]) -> float:
         return self.cash + sum(
             p.unrealized(marks.get(sym, p.entry)) for sym, p in self.positions.items()

@@ -91,4 +91,24 @@ def by_strategy(trades: Sequence[Trade]) -> dict[str, dict[str, Any]]:
     return out
 
 
-__all__ = ["PF_CAP", "by_strategy", "compute", "max_drawdown", "profit_factor"]
+def by_year(trades: Sequence[Trade]) -> dict[str, dict[str, Any]]:
+    """Trade statistics per calendar year of the exit: stability across
+    market phases, not just one total."""
+    from datetime import UTC, datetime
+
+    groups: dict[str, list[Trade]] = {}
+    for t in trades:
+        year = str(datetime.fromtimestamp(t.exit_ms / 1000, UTC).year)
+        groups.setdefault(year, []).append(t)
+    return {
+        y: {
+            "trades": len(ts),
+            "profit_factor": profit_factor([t.net for t in ts]),
+            "avg_r": float(np.mean([t.r_multiple for t in ts])),
+            "net_pnl": float(sum(t.net for t in ts)),
+        }
+        for y, ts in sorted(groups.items())
+    }
+
+
+__all__ = ["PF_CAP", "by_strategy", "by_year", "compute", "max_drawdown", "profit_factor"]

@@ -24,7 +24,7 @@ from jarvis.market_data.store import BarStore
 from jarvis.trading.availability import Coverage, coverage
 from jarvis.trading.instruments import Instrument
 
-BYTES_PER_BAR = 110  # SQLite row incl. index, measured order of magnitude
+BYTES_PER_BAR = 150  # measured on real backfills: ~146 bytes per bar incl. index
 FUNDING_INTERVAL_MS = 8 * 3_600_000
 OI_INTERVAL_MS = 3_600_000
 _PAGES = {"bybit": 1000, "okx": 100, "binance": 1000, "coinbase": 300}

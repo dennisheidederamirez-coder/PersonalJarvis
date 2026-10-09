@@ -26,7 +26,7 @@ from numpy.typing import NDArray
 from jarvis.trading.data import HOUR_MS, BarSeries, DataQuality, require_usable
 from jarvis.trading.journal import Journal, MemoryJournal
 from jarvis.trading.leverage import LeverageGrant
-from jarvis.trading.metrics import by_strategy, compute
+from jarvis.trading.metrics import by_strategy, by_year, compute
 from jarvis.trading.paper import CostModel, PaperBroker, Trade
 from jarvis.trading.risk import Account, EntryRequest, OpenPosition, RiskLimits, RiskManager
 from jarvis.trading.strategies import Strategy, Target
@@ -61,6 +61,11 @@ class DemoTrader:
     on_trade: Callable[[Trade], None] | None = None
     #: fixed leverage per strategy name (default 1x); never changed at runtime
     leverage: dict[str, LeverageGrant] = field(default_factory=dict)
+    #: observed funding payments (ts_ms -> rate) of the SAME venue as the bars.
+    #: Inside their span they are charged at their real times; outside it the
+    #: cost model's constant rate applies and the result says "assumed".
+    funding_rates: dict[int, float] | None = None
+    _funding_ts: Any = None
     _pending: dict[str, _Pending] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ api
@@ -100,7 +105,7 @@ class DemoTrader:
         self._execute_pending(series, ts, o)
         self._check_exits(sym, ts, o, h, lo)
         self.marks[sym] = c
-        self.broker.accrue_funding(sym, c, series.interval_ms / HOUR_MS)
+        self._funding(sym, ts, c, series.interval_ms)
         for event in self.risk.observe(ts, self.equity()):
             self.journal.record(
                 "risk_event",
@@ -136,6 +141,25 @@ class DemoTrader:
         for strategy, target in ordered:
             if self._handle_target(series, ts, c, strategy, target):
                 break
+
+    def funding_span(self) -> tuple[int, int] | None:
+        if not self.funding_rates:
+            return None
+        return min(self.funding_rates), max(self.funding_rates)
+
+    def _funding(self, sym: str, ts: int, mark: float, interval_ms: int) -> None:
+        span = self.funding_span()
+        # a payment covers the funding interval before it: observed coverage
+        # reaches one interval before the first and after the last payment
+        if span is None or not span[0] - 8 * HOUR_MS <= ts <= span[1] + 8 * HOUR_MS:
+            self.broker.accrue_funding(sym, mark, interval_ms / HOUR_MS)  # assumption
+            return
+        if self._funding_ts is None:
+            self._funding_ts = np.asarray(sorted(self.funding_rates or {}), dtype=np.int64)
+        lo = int(np.searchsorted(self._funding_ts, ts, side="left"))
+        hi = int(np.searchsorted(self._funding_ts, ts + interval_ms, side="left"))
+        for t in self._funding_ts[lo:hi]:
+            self.broker.charge_funding(sym, mark, (self.funding_rates or {})[int(t)])
 
     def close_all(self, ts: int, reason: str) -> None:
         for sym in list(self.broker.positions):
@@ -334,6 +358,7 @@ def run_backtest(
     end: int | None = None,
     journal: Journal | None = None,
     leverage: Mapping[str, LeverageGrant] | None = None,
+    funding_rates: Mapping[int, float] | None = None,
 ) -> BacktestResult:
     """Replay *series*; trade only in ``[start, end)``. Bars before ``start``
     serve as indicator history (warm-up), never as tradable bars. Several
@@ -356,6 +381,7 @@ def run_backtest(
         RiskManager(risk_limits),
         journal,
         leverage=dict(leverage or {}),
+        funding_rates=dict(funding_rates) if funding_rates else None,
     )
     curve: list[float] = []
     for i in range(start, end):
@@ -371,6 +397,15 @@ def run_backtest(
         trader.trades, equity, capital=capital, periods_per_year=series.periods_per_year
     )
     metrics["by_strategy"] = by_strategy(trader.trades)
+    metrics["by_year"] = by_year(trader.trades)
+    span = trader.funding_span()
+    metrics["funding_source"] = (
+        "observed"
+        if span
+        and span[0] - 8 * HOUR_MS <= int(series.ts[start])
+        and span[1] >= last_ts - 8 * HOUR_MS
+        else "partly observed" if span else "assumed"
+    )
     return BacktestResult(
         "+".join(s.name for s in books),
         dict(books[0].params) if len(books) == 1 else {s.name: dict(s.params) for s in books},

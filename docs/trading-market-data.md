@@ -12,9 +12,9 @@ Facts below were checked against the venues' public documentation in
 
 | Source | Bars | Funding | Open interest | Public limit | Notes |
 |---|---|---|---|---|---|
-| **Bybit V5** (primary) | spot + linear perps, 1000 per page, full history | history | history back to listing (5 min–1 d) | 600 requests / 5 s per IP | Global Bybit restricts services for EEA residents; the public data endpoints were reachable. Read the API terms before continuous use. |
-| **OKX V5** (backup) | spot + swaps, 100 per page, older than 3 months via `history-candles` | history | statistics | 20 requests / 2 s | Independent operator. |
-| **Binance REST API** | spot + USD-M, 1000 per page; **taker-buy volume per bar** | history | last 30 days only | 6000 weight / min per IP | The REST API may be used by personal bots under Binance's terms. |
+| **Bybit V5** | spot + linear perps, 1000 per page, full history | history | history back to listing (5 min–1 d) | 600 requests / 5 s per IP | **Not for installs in the EEA:** global Bybit stopped serving EEA residents on 2026-07-01, and its terms neither allow nor exclude keyless access. Use OKX and Binance there. |
+| **OKX V5** (primary perpetuals in the EEA) | spot + swaps, 100 per page, older than 3 months via `history-candles` | history | statistics | 20 requests / 2 s | Independent operator. |
+| **Binance REST API** (perpetual backtests: price AND funding history from one venue) | spot + USD-M, 1000 per page; **taker-buy volume per bar** | history | last 30 days only | 6000 weight / min per IP | The REST API may be used by personal bots under Binance's terms. |
 | **Binance Vision** bulk files | deep history | yes | yes | – | CC BY-NC-SA 4.0. Allowed only for personal non-production backtesting; **live trading or order generation is forbidden**. Not used by the agent. |
 | **Coinbase Exchange** | spot only, USD quote, 300 per page | – | – | not published | Independent spot reference; also available to US users. |
 | **The eventual demo venue** | its own feed | its own feed | – | per venue | Later: the trading venue's own mark price and funding for realistic paper fills. |
@@ -78,8 +78,9 @@ Rules built into the adapters:
 
 **Now, free and reliable (no standing connection):**
 
-1. Bars, funding and open interest from Bybit, with OKX as backup and
-   Coinbase as the spot reference.
+1. Bars and funding from Binance USD-M (one venue for both), OKX as the
+   cross-check, Coinbase as the spot reference. Bybit only where it may
+   serve the user.
 2. CVD and delta from Binance bars, with history.
 3. Modelled liquidation zones from one venue's bars and open interest,
    labelled as a model.

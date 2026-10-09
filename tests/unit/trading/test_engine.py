@@ -142,3 +142,24 @@ def test_a_trading_window_uses_earlier_bars_only_as_history() -> None:
     assert all(t.entry_ms > int(series.ts[600]) for t in result.trades)
     assert len(result.equity) == 1 + 400
     assert np.isfinite(result.metrics["sharpe"])
+
+
+def test_observed_funding_is_charged_at_its_real_times_and_labelled() -> None:
+    series = _series([FLAT_BAR] * 26)  # 26 hourly bars from 00:00
+    script = Script({0: Target(Side.LONG, 90.0, 200.0)})
+    observed = {T0 + 8 * HOUR_MS: 0.001, T0 + 16 * HOUR_MS: -0.0005, T0 + 24 * HOUR_MS: 0.002}
+    costs = CostModel(fee_rate=0.0, slippage_bps=0.0, funding_rate_8h=0.5)  # absurd if used
+    real = run_backtest(series, script, costs=costs, funding_rates=observed)
+    (trade,) = real.trades
+    assert trade.funding == pytest.approx(trade.qty * 100 * (0.001 - 0.0005 + 0.002))
+    assert real.metrics["funding_source"] == "observed"
+    assumed = run_backtest(series, script, costs=costs)
+    assert assumed.metrics["funding_source"] == "assumed" and assumed.trades[0].funding > 0
+
+
+def test_results_are_broken_down_by_year() -> None:
+    series = random_walk(24 * 500, seed=13)
+    result = run_backtest(series, SmaCross(10, 30))
+    years = result.metrics["by_year"]
+    assert set(years) <= {"2026", "2027"} and sum(y["trades"] for y in years.values()) == len(
+        result.trades)

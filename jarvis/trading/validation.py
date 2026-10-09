@@ -27,7 +27,7 @@ import numpy as np
 from jarvis.trading.data import BarSeries, require_usable
 from jarvis.trading.engine import BacktestResult, run_backtest
 from jarvis.trading.leverage import LeverageGrant, leverage_reasons
-from jarvis.trading.metrics import profit_factor
+from jarvis.trading.metrics import by_year, profit_factor
 from jarvis.trading.paper import CostModel, Trade
 from jarvis.trading.risk import RiskLimits
 from jarvis.trading.strategies import Strategy
@@ -62,6 +62,8 @@ class Verdict:
     fold_consistency: float = 0.0
     #: the untouched final out-of-sample period, tested once at the end
     holdout: dict[str, Any] | None = None
+    #: out-of-sample trades per calendar year (stability across market phases)
+    oos_by_year: dict[str, dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
@@ -110,6 +112,7 @@ def walk_forward(
     experimental_approval: bool = False,
     holdout_frac: float = 0.0,
     extra_tests: int = 1,
+    funding_rates: Mapping[int, float] | None = None,
 ) -> Verdict:
     """``holdout_frac`` keeps the last share of the data out of every fold and
     every parameter choice; the configuration chosen on all earlier data is
@@ -152,6 +155,7 @@ def walk_forward(
                 costs=costs,
                 limits=limits,
                 capital=capital,
+                funding_rates=funding_rates,
             )
             score = _score(ins, criteria)
             if best is None or score > best[0]:
@@ -171,6 +175,7 @@ def walk_forward(
             costs=costs,
             limits=limits,
             capital=capital,
+            funding_rates=funding_rates,
         )
         chosen.append(params)
         oos.extend(test.trades)
@@ -198,6 +203,7 @@ def walk_forward(
                 costs=costs,
                 limits=limits,
                 capital=capital,
+                funding_rates=funding_rates,
             )
             score = _score(ins, criteria)
             if best_all is None or score > best_all[0]:
@@ -213,6 +219,7 @@ def walk_forward(
                 costs=costs,
                 limits=limits,
                 capital=capital,
+                funding_rates=funding_rates,
             )
             holdout = {
                 "params": best_all[1],
@@ -284,6 +291,7 @@ def edge_verdict(
         tuple(folds_out),
         consistency,
         holdout,
+        by_year(oos),
     )
 
 
