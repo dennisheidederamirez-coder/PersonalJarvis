@@ -4,9 +4,10 @@ only fetch what is missing; sources are never mixed in one series."""
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from jarvis.trading.data import BarSeries, make_series
 from jarvis.trading.instruments import Instrument
@@ -20,6 +21,14 @@ _SCHEMA = (
         volume REAL NOT NULL,
         taker_buy REAL,
         PRIMARY KEY (source, interval_ms, ts)
+    )""",
+    """CREATE TABLE IF NOT EXISTS md_funding (
+        source TEXT NOT NULL, ts INTEGER NOT NULL, rate REAL NOT NULL,
+        PRIMARY KEY (source, ts)
+    )""",
+    """CREATE TABLE IF NOT EXISTS md_open_interest (
+        source TEXT NOT NULL, ts INTEGER NOT NULL, value REAL NOT NULL, unit TEXT NOT NULL,
+        PRIMARY KEY (source, ts)
     )""",
 )
 
@@ -91,6 +100,45 @@ class BarStore:
             retrieved_at=f"cache:{self.path.name}",
             taker_buy=buys if rows and all(b is not None for b in buys) else None,
         )
+
+    def save_funding(self, source: str, points: Sequence[Any]) -> int:
+        with self._conn() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO md_funding VALUES (?, ?, ?)",
+                [(source, int(p.ts_ms), float(p.rate)) for p in points],
+            )
+        return len(points)
+
+    def save_open_interest(self, source: str, points: Sequence[Any]) -> int:
+        with self._conn() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO md_open_interest VALUES (?, ?, ?, ?)",
+                [(source, int(p.ts_ms), float(p.value), str(p.unit)) for p in points],
+            )
+        return len(points)
+
+    def load_funding(self, source: str) -> list[tuple[int, float]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT ts, rate FROM md_funding WHERE source = ? ORDER BY ts", (source,)
+            ).fetchall()
+        return [(int(t), float(r)) for t, r in rows]
+
+    def load_open_interest(self, source: str) -> list[tuple[int, float]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT ts, value FROM md_open_interest WHERE source = ? ORDER BY ts", (source,)
+            ).fetchall()
+        return [(int(t), float(v)) for t, v in rows]
+
+    def sources(self) -> list[tuple[str, int, int, int, int]]:
+        """(source, interval_ms, bars, first ts, last ts) for everything cached."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT source, interval_ms, COUNT(*), MIN(ts), MAX(ts) FROM md_bars"
+                " GROUP BY source, interval_ms ORDER BY source, interval_ms"
+            ).fetchall()
+        return [(str(a), int(b), int(c), int(d), int(e)) for a, b, c, d, e in rows]
 
     def last_ts(self, source: str, interval_ms: int) -> int | None:
         with self._conn() as conn:

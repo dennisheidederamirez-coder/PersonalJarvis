@@ -10,7 +10,7 @@ response shapes are pinned by recorded fixtures in the tests.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -52,6 +52,7 @@ class Adapter:
     name: str = ""
     kinds: frozenset[Kind] = frozenset()
     page_bars: int = 0
+    _INTERVALS: Mapping[int, Any] = {}
 
     def __init__(self, client: PoliteClient, *, now_ms: Callable[[], int] = _now_ms) -> None:
         self.client = client
@@ -67,6 +68,8 @@ class Adapter:
     ) -> BarSeries:
         if kind not in self.kinds:
             raise MarketDataError(self.name, None, f"no {kind} data")
+        if interval_ms not in self._INTERVALS:
+            raise MarketDataError(self.name, None, f"no {interval_ms // 60_000} min bars")
         sym = self.symbol(instrument, kind)
         closed_before = min(end_ms, self._now_ms())
         rows: dict[int, Row] = {}
@@ -127,7 +130,7 @@ class BybitAdapter(Adapter):
     kinds = frozenset({Kind.SPOT, Kind.PERP})
     page_bars = 1000
     BASE: Final = "https://api.bybit.com"
-    _INTERVALS: Final = {
+    _INTERVALS: Mapping[int, Any] = {
         MINUTE_MS: "1",
         5 * MINUTE_MS: "5",
         15 * MINUTE_MS: "15",
@@ -225,7 +228,7 @@ class OkxAdapter(Adapter):
     kinds = frozenset({Kind.SPOT, Kind.PERP})
     page_bars = 100
     BASE: Final = "https://www.okx.com"
-    _INTERVALS: Final = {
+    _INTERVALS: Mapping[int, Any] = {
         MINUTE_MS: "1m",
         5 * MINUTE_MS: "5m",
         15 * MINUTE_MS: "15m",
@@ -298,7 +301,7 @@ class BinanceAdapter(Adapter):
     page_bars = 1000
     SPOT: Final = "https://api.binance.com"
     FUTURES: Final = "https://fapi.binance.com"
-    _INTERVALS: Final = {
+    _INTERVALS: Mapping[int, Any] = {
         MINUTE_MS: "1m",
         5 * MINUTE_MS: "5m",
         15 * MINUTE_MS: "15m",
@@ -389,7 +392,7 @@ class CoinbaseAdapter(Adapter):
     kinds = frozenset({Kind.SPOT})
     page_bars = 300
     BASE: Final = "https://api.exchange.coinbase.com"
-    _GRANULARITY: Final = {
+    _INTERVALS: Mapping[int, Any] = {  # seconds; Coinbase has no 4 h granularity
         MINUTE_MS: 60,
         5 * MINUTE_MS: 300,
         15 * MINUTE_MS: 900,
@@ -407,7 +410,7 @@ class CoinbaseAdapter(Adapter):
         data = await self.client.get_json(
             f"{self.BASE}/products/{sym}/candles",
             {
-                "granularity": self._GRANULARITY[interval_ms],
+                "granularity": self._INTERVALS[interval_ms],
                 "start": iso(start_ms),
                 "end": iso(end_ms - interval_ms),
             },

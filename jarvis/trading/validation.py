@@ -43,6 +43,7 @@ class EdgeCriteria:
     bootstrap: int = 4000
     seed: int = 7
     min_in_sample_trades: int = 10
+    min_fold_consistency: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,10 @@ class Verdict:
     alpha_used: float
     chosen_params: tuple[dict[str, Any], ...]
     fold_results: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: share of folds with a positive out-of-sample return (stability)
+    fold_consistency: float = 0.0
+    #: the untouched final out-of-sample period, tested once at the end
+    holdout: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
@@ -103,8 +108,16 @@ def walk_forward(
     capital: float = 10_000.0,
     leverage: float = 1.0,
     experimental_approval: bool = False,
+    holdout_frac: float = 0.0,
+    extra_tests: int = 1,
 ) -> Verdict:
-    """With ``leverage`` > 1 every backtest runs the strategy at that fixed
+    """``holdout_frac`` keeps the last share of the data out of every fold and
+    every parameter choice; the configuration chosen on all earlier data is
+    tested there exactly once, and it must hold up there too.
+    ``extra_tests`` multiplies the number of tests the significance level is
+    divided by (e.g. coins x timeframes compared in one study).
+
+    With ``leverage`` > 1 every backtest runs the strategy at that fixed
     leverage (validation runs count as validated and reviewed; above 20x the
     owner's approval is still required, above 30x it is refused)."""
     criteria = criteria or EdgeCriteria()
@@ -115,7 +128,10 @@ def walk_forward(
     if blocked:
         raise ValueError("; ".join(blocked))
     require_usable(series)
-    n = len(series)
+    if not 0.0 <= holdout_frac < 0.5:
+        raise ValueError("holdout_frac must be in [0, 0.5)")
+    total = len(series)
+    n = total - int(total * holdout_frac)  # folds never see the holdout
     block = n // (folds + 1)
     if block < 50 or not params_grid:
         raise ValueError("not enough data for walk-forward validation")
@@ -168,7 +184,56 @@ def walk_forward(
                 "max_drawdown": test.metrics["max_drawdown"],
             }
         )
-    return edge_verdict(family, oos, chosen, folds_out, n_families=n_families, criteria=criteria)
+    holdout = None
+    if n < total:
+        best_all: tuple[float, dict[str, Any]] | None = None
+        for params in params_grid:
+            candidate = factory(**params)
+            ins = run_backtest(
+                series,
+                candidate,
+                leverage={candidate.name: grant},
+                start=0,
+                end=n,
+                costs=costs,
+                limits=limits,
+                capital=capital,
+            )
+            score = _score(ins, criteria)
+            if best_all is None or score > best_all[0]:
+                best_all = (score, dict(params))
+        if best_all is not None and best_all[0] != float("-inf"):
+            final = factory(**best_all[1])
+            ho = run_backtest(
+                series,
+                final,
+                leverage={final.name: grant},
+                start=n,
+                end=total,
+                costs=costs,
+                limits=limits,
+                capital=capital,
+            )
+            holdout = {
+                "params": best_all[1],
+                "trades": ho.metrics["trades"],
+                "profit_factor": ho.metrics["profit_factor"],
+                "avg_r": ho.metrics["avg_r"],
+                "return_pct": ho.metrics["return_pct"],
+                "max_drawdown": ho.metrics["max_drawdown"],
+                "sharpe": ho.metrics["sharpe"],
+            }
+        else:
+            holdout = {"params": None, "trades": 0, "note": "no candidate before the holdout"}
+    return edge_verdict(
+        family,
+        oos,
+        chosen,
+        folds_out,
+        n_families=n_families * max(1, extra_tests),
+        criteria=criteria,
+        holdout=holdout,
+    )
 
 
 def edge_verdict(
@@ -179,6 +244,7 @@ def edge_verdict(
     *,
     n_families: int,
     criteria: EdgeCriteria,
+    holdout: dict[str, Any] | None = None,
 ) -> Verdict:
     r = [t.r_multiple for t in oos]
     pf = profit_factor([t.net for t in oos])
@@ -194,6 +260,17 @@ def edge_verdict(
         reasons.append("no positive expectancy after costs")
     if p > alpha:
         reasons.append(f"not significant (p={p:.3f} > {alpha:.4f})")
+    traded = [f for f in folds_out if f.get("trades")]
+    consistency = (
+        sum(1 for f in traded if f.get("return_pct", 0) > 0) / len(traded) if traded else 0.0
+    )
+    if traded and consistency < criteria.min_fold_consistency:
+        reasons.append(f"profitable in only {consistency:.0%} of folds (unstable)")
+    if holdout is not None:
+        if not holdout.get("trades"):
+            reasons.append("no trade in the final holdout period")
+        elif holdout.get("avg_r", 0) <= 0 or holdout.get("profit_factor", 0) < 1.0:
+            reasons.append("the final holdout period does not confirm the edge")
     return Verdict(
         family,
         not reasons,
@@ -205,6 +282,8 @@ def edge_verdict(
         alpha,
         tuple(chosen),
         tuple(folds_out),
+        consistency,
+        holdout,
     )
 
 
