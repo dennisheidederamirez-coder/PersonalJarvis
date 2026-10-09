@@ -27,6 +27,7 @@ objectively over time.
 | `metrics` | Trades, hit rate, profit factor, expectancy, average R, fees, slippage, funding, maximum drawdown, Sharpe, Sortino. |
 | `journal` | Every decision, approval, rejection, cancellation, fill, trade and risk event, in memory or SQLite. The SQLite journal also persists the risk state (kill switch, seen order ids). |
 | `signals`, `signal_eval` | External signals (e.g. TradingView alerts) as validated, deduplicated evidence, and an event study against random timing. See [External signals](trading-external-signals.md). |
+| `leverage` | Simulated futures leverage, gated by tier (see below). Isolated margin with a liquidation price from maintenance margin and a closing-fee reserve. |
 | `setups` | The strategy book. Only strategies with a `tradable` walk-forward verdict may open demo trades. Competing setups on one bar are ranked by the strategy's validated out-of-sample expectancy, then its p-value, then the setup's reward-to-risk, and go to the risk manager in that order. |
 | `signal_strategy` | External alerts as one more rule-based strategy, validated, ranked and attributed like every other. It acts at the first bar close after an alert *arrived*. |
 
@@ -59,6 +60,42 @@ Lifting the kill switch requires the exact phrase `reset kill switch`.
   forbids model and agent imports (`anthropic`, `openai`, `jarvis.brain`,
   `jarvis.missions`, `jarvis.society`) in this package. A model may comment on
   research later, but it cannot decide a trade.
+
+## Leverage (simulation only)
+
+Leverage never changes what a trade may lose. The risk manager sizes every
+position from the stop distance (`risk_per_trade`), exactly as without
+leverage. Leverage only sets how much isolated margin a position ties up, and
+with it the liquidation price.
+
+| Range | Condition |
+|---|---|
+| 1–5x | initial demo range |
+| up to 10x | the strategy was validated walk-forward **at that leverage** |
+| up to 20x | additionally reviewed separately |
+| up to 30x | experimental simulation, only with the owner's explicit approval |
+| above 30x | never |
+
+- **Fixed per strategy.** A strategy's leverage is a configured, fixed value
+  (`StrategyBook.add(..., leverage=LeverageGrant(...))`). A strategy target
+  has no leverage field, so neither a rule nor a model can raise it per trade.
+- **Stop before liquidation.** The stop must lie before the liquidation
+  price and use at most half the distance to it (`liquidation_buffer`).
+  Without a gap the stop therefore always fills first. A gap through the
+  liquidation price loses the isolated margin.
+- **Portfolio limits.** These are added on top of the existing limits:
+  - total margin usage (`max_margin_usage`);
+  - same-direction risk of correlated positions (`max_correlated_risk`; a
+    pair whose correlation is unknown counts as fully correlated).
+- **Unclear risk means no trade.** An unknown or too high maintenance margin,
+  or unusable data, means no trade.
+- **Separate validation.** `validation.compare_leverage` validates each
+  leverage level as its own family. The unleveraged variant is always part of
+  the comparison, and the significance level is split across the levels.
+
+The liquidation formula is a conservative simplification (lowest maintenance
+tier, last price). Real venues use tiered rates and the mark price. Before a
+real demo account is used, the venue's own figures replace it.
 
 ## Roadmap
 

@@ -25,6 +25,7 @@ from typing import Final
 from jarvis.trading.data import BarSeries
 from jarvis.trading.engine import Candidate
 from jarvis.trading.instruments import Instrument
+from jarvis.trading.leverage import LeverageGrant
 from jarvis.trading.signals import ExternalSignal, SignalLog
 from jarvis.trading.strategies import Strategy, Target
 from jarvis.trading.validation import Verdict
@@ -61,11 +62,21 @@ class StrategyBook:
     confirmations: SignalLog | None = None
     confirm_window_bars: int = 3
     _entries: dict[str, tuple[Strategy, Verdict]] = field(default_factory=dict)
+    _grants: dict[str, LeverageGrant] = field(default_factory=dict)
 
-    def add(self, strategy: Strategy, verdict: Verdict) -> None:
+    def add(
+        self, strategy: Strategy, verdict: Verdict, *, leverage: LeverageGrant | None = None
+    ) -> None:
+        """*leverage* is fixed for the strategy; the verdict must come from a
+        validation AT that leverage (``validation.walk_forward(leverage=...)``)."""
         if strategy.name in self._entries:
             raise ValueError(f"strategy {strategy.name!r} already in the book")
         self._entries[strategy.name] = (strategy, verdict)
+        self._grants[strategy.name] = leverage or LeverageGrant()
+
+    def grants(self) -> dict[str, LeverageGrant]:
+        """The engine's fixed leverage per strategy (``DemoTrader.leverage``)."""
+        return dict(self._grants)
 
     def active(self) -> list[Strategy]:
         """The strategies allowed to open demo trades."""

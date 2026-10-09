@@ -82,10 +82,11 @@ class SmaCross(_AtrExits):
         stop_atr: float = 2.0,
         tp_atr: float = 4.0,
         allow_short: bool = True,
+        name: str | None = None,
     ) -> None:
         if fast >= slow:
             raise ValueError("fast must be shorter than slow")
-        self.name = "sma_cross"
+        self.name = name or "sma_cross"
         self.params = {
             "fast": fast,
             "slow": slow,
@@ -138,8 +139,9 @@ class DonchianBreakout(_AtrExits):
         stop_atr: float = 2.0,
         tp_atr: float = 6.0,
         allow_short: bool = True,
+        name: str | None = None,
     ) -> None:
-        self.name = "donchian_breakout"
+        self.name = name or "donchian_breakout"
         self.params = {
             "entry_n": entry_n,
             "exit_n": exit_n,
@@ -187,8 +189,9 @@ class RsiReversion(_AtrExits):
         stop_atr: float = 1.5,
         tp_atr: float = 2.0,
         allow_short: bool = True,
+        name: str | None = None,
     ) -> None:
-        self.name = "rsi_reversion"
+        self.name = name or "rsi_reversion"
         self.params = {
             "n": n,
             "low": low,

@@ -16,7 +16,7 @@ Per bar ``i`` of an instrument:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +25,7 @@ from numpy.typing import NDArray
 
 from jarvis.trading.data import HOUR_MS, BarSeries, DataQuality, require_usable
 from jarvis.trading.journal import Journal, MemoryJournal
+from jarvis.trading.leverage import LeverageGrant
 from jarvis.trading.metrics import by_strategy, compute
 from jarvis.trading.paper import CostModel, PaperBroker, Trade
 from jarvis.trading.risk import Account, EntryRequest, OpenPosition, RiskLimits, RiskManager
@@ -58,13 +59,15 @@ class DemoTrader:
     trades: list[Trade] = field(default_factory=list)
     marks: dict[str, float] = field(default_factory=dict)
     on_trade: Callable[[Trade], None] | None = None
+    #: fixed leverage per strategy name (default 1x); never changed at runtime
+    leverage: dict[str, LeverageGrant] = field(default_factory=dict)
     _pending: dict[str, _Pending] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ api
 
     def account(self, *, excluding: str | None = None) -> Account:
         positions = [
-            OpenPosition(s, p.side, p.qty, p.entry, p.stop, self.marks.get(s, p.entry))
+            OpenPosition(s, p.side, p.qty, p.entry, p.stop, self.marks.get(s, p.entry), p.margin)
             for s, p in self.broker.positions.items()
             if s != excluding
         ]
@@ -179,7 +182,13 @@ class DemoTrader:
             pending.close_id = f"exit:{decision_id}"
         if side is not None and target.stop is not None and (pos is None or pos.side is not side):
             req = EntryRequest(
-                decision_id, series.instrument, side, close, target.stop, target.take_profit
+                decision_id,
+                series.instrument,
+                side,
+                close,
+                target.stop,
+                target.take_profit,
+                self.leverage.get(strategy.name, LeverageGrant()),
             )
             verdict = self.risk.check_entry(req, self.account(excluding=sym))
             if verdict.approved:
@@ -247,6 +256,8 @@ class DemoTrader:
             ts,
             pending.reason,
             strategy=pending.strategy,
+            leverage=req.leverage.leverage,
+            mmr=req.instrument.mmr,
         )
         self.journal.record("fill", ts, sym, _fill_dict(fill))
 
@@ -255,6 +266,13 @@ class DemoTrader:
         if pos is None:
             return
         s = pos.side.sign
+        liq = pos.liquidation
+        if liq is not None and ((o <= liq) if s > 0 else (o >= liq)):
+            # Gapped through the liquidation price: the isolated margin is lost.
+            # Without a gap the stop — which always lies before the liquidation
+            # price — is reached first on any continuous path.
+            self._close(sym, liq, ts, "liquidation", f"liq:{pos.client_id}")
+            return
         stop_hit = (lo <= pos.stop) if s > 0 else (h >= pos.stop)
         tp = pos.take_profit
         tp_hit = tp is not None and ((h >= tp) if s > 0 else (lo <= tp))
@@ -315,6 +333,7 @@ def run_backtest(
     start: int = 0,
     end: int | None = None,
     journal: Journal | None = None,
+    leverage: Mapping[str, LeverageGrant] | None = None,
 ) -> BacktestResult:
     """Replay *series*; trade only in ``[start, end)``. Bars before ``start``
     serve as indicator history (warm-up), never as tradable bars. Several
@@ -330,7 +349,14 @@ def run_backtest(
     for s in books:
         s.prepare(series)
     journal = journal or MemoryJournal()
-    trader = DemoTrader(PaperBroker(capital, costs or CostModel()), RiskManager(limits), journal)
+    cost_model = costs or CostModel()
+    risk_limits = limits or RiskLimits(fee_rate=cost_model.fee_rate)
+    trader = DemoTrader(
+        PaperBroker(capital, cost_model),
+        RiskManager(risk_limits),
+        journal,
+        leverage=dict(leverage or {}),
+    )
     curve: list[float] = []
     for i in range(start, end):
         trader.process_bar(series, i, books, decide=i < end - 1, rank=rank)

@@ -26,6 +26,7 @@ import numpy as np
 
 from jarvis.trading.data import BarSeries, require_usable
 from jarvis.trading.engine import BacktestResult, run_backtest
+from jarvis.trading.leverage import LeverageGrant, leverage_reasons
 from jarvis.trading.metrics import profit_factor
 from jarvis.trading.paper import CostModel, Trade
 from jarvis.trading.risk import RiskLimits
@@ -100,8 +101,19 @@ def walk_forward(
     costs: CostModel | None = None,
     limits: RiskLimits | None = None,
     capital: float = 10_000.0,
+    leverage: float = 1.0,
+    experimental_approval: bool = False,
 ) -> Verdict:
+    """With ``leverage`` > 1 every backtest runs the strategy at that fixed
+    leverage (validation runs count as validated and reviewed; above 20x the
+    owner's approval is still required, above 30x it is refused)."""
     criteria = criteria or EdgeCriteria()
+    grant = LeverageGrant(
+        leverage, validated=True, reviewed=True, experimental_approval=experimental_approval
+    )
+    blocked = leverage_reasons(grant)
+    if blocked:
+        raise ValueError("; ".join(blocked))
     require_usable(series)
     n = len(series)
     block = n // (folds + 1)
@@ -114,9 +126,11 @@ def walk_forward(
         train_end, test_end = k * block, (k + 1) * block if k < folds else n
         best: tuple[float, dict[str, Any]] | None = None
         for params in params_grid:
+            candidate = factory(**params)
             ins = run_backtest(
                 series,
-                factory(**params),
+                candidate,
+                leverage={candidate.name: grant},
                 start=0,
                 end=train_end,
                 costs=costs,
@@ -131,9 +145,11 @@ def walk_forward(
             folds_out.append({"fold": k, "params": None, "note": "no in-sample candidate"})
             continue
         params = best[1]
+        chosen_strategy = factory(**params)
         test = run_backtest(
             series,
-            factory(**params),
+            chosen_strategy,
+            leverage={chosen_strategy.name: grant},
             start=train_end,
             end=test_end,
             costs=costs,
@@ -217,12 +233,45 @@ def compare(
     return Comparison(verdicts, best)
 
 
+def compare_leverage(
+    series: BarSeries,
+    family: str,
+    factory: StrategyFactory,
+    params_grid: Sequence[Mapping[str, Any]],
+    *,
+    levels: Sequence[float] = (1, 2, 3, 5),
+    experimental_approval: bool = False,
+    **kw: Any,
+) -> Comparison:
+    """The same strategy validated separately at each leverage level, so a
+    leveraged variant is only used if IT has a supported edge — and the
+    unleveraged variant is always in the comparison as the baseline."""
+    levels = sorted({float(x) for x in (1.0, *levels)})
+    verdicts = tuple(
+        walk_forward(
+            series,
+            f"{family}@{lev:g}x",
+            factory,
+            params_grid,
+            n_families=len(levels),
+            leverage=lev,
+            experimental_approval=experimental_approval,
+            **kw,
+        )
+        for lev in levels
+    )
+    supported = [v for v in verdicts if v.tradable]
+    best = max(supported, key=lambda v: v.oos_expectancy_r, default=None)
+    return Comparison(verdicts, best)
+
+
 __all__ = [
     "Comparison",
     "EdgeCriteria",
     "Verdict",
     "bootstrap_p_value",
     "compare",
+    "compare_leverage",
     "edge_verdict",
     "grid",
     "walk_forward",

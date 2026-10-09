@@ -22,6 +22,13 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from jarvis.trading.instruments import Instrument
+from jarvis.trading.leverage import (
+    LeverageGrant,
+    initial_margin,
+    leverage_reasons,
+    liquidation_price,
+    stop_before_liquidation,
+)
 from jarvis.trading.strategies import Side, stop_on_correct_side
 
 RESET_PHRASE: Final = "reset kill switch"
@@ -39,6 +46,11 @@ class RiskLimits:
     min_stop_distance: float = 0.002
     max_stop_distance: float = 0.20
     min_notional: float = 10.0
+    max_margin_usage: float = 0.5  # sum of isolated margins / equity
+    liquidation_buffer: float = 0.5  # the stop uses at most half the way to liquidation
+    max_correlated_risk: float = 0.01  # same-direction risk of correlated positions
+    correlation_threshold: float = 0.7
+    fee_rate: float = 0.0005  # for the liquidation fee reserve (match the cost model)
 
     def __post_init__(self) -> None:
         for name in ("risk_per_trade", "max_open_risk", "daily_loss_limit", "max_drawdown"):
@@ -57,6 +69,7 @@ class OpenPosition:
     entry: float
     stop: float
     mark: float
+    margin: float = 0.0  # isolated margin tied up (notional / leverage)
 
     @property
     def notional(self) -> float:
@@ -73,6 +86,12 @@ class Account:
     equity: float
     positions: Sequence[OpenPosition] = ()
     marks: Mapping[str, float] = field(default_factory=dict)
+    #: return correlations by symbol pair; a pair that is missing counts as
+    #: fully correlated (unknown risk is treated as the worse case)
+    correlations: Mapping[frozenset[str], float] = field(default_factory=dict)
+
+    def correlation(self, a: str, b: str) -> float:
+        return 1.0 if a == b else self.correlations.get(frozenset((a, b)), 1.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +102,7 @@ class EntryRequest:
     reference_price: float  # the price the decision was made at
     stop: float
     take_profit: float | None = None
+    leverage: LeverageGrant = field(default_factory=LeverageGrant)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +111,8 @@ class RiskDecision:
     qty: float = 0.0
     reasons: tuple[str, ...] = ()
     risk_amount: float = 0.0
+    margin: float = 0.0
+    liquidation: float | None = None
 
 
 @dataclass
@@ -219,6 +241,9 @@ class RiskManager:
             reasons.append("a position in this instrument is already open")
         if len(account.positions) >= lim.max_positions:
             reasons.append("maximum number of positions reached")
+        reasons.extend(leverage_reasons(req.leverage))
+        if not 0 < req.instrument.mmr < 1 / max(1.0, req.leverage.leverage):
+            reasons.append("maintenance margin unknown or too high for this leverage")
         if reasons:
             return self._reject(req, reasons)
 
@@ -235,8 +260,29 @@ class RiskManager:
             reasons.append("gross exposure would exceed the limit")
         if reasons:
             return self._reject(req, reasons)
+        lev = req.leverage.leverage
+        margin = initial_margin(price, qty, lev)
+        liq = liquidation_price(
+            req.side, price, qty, lev, mmr=req.instrument.mmr, fee_rate=lim.fee_rate
+        )
+        if not stop_before_liquidation(req.side, price, stop, liq, buffer=lim.liquidation_buffer):
+            reasons.append("stop not safely before the liquidation price")
+        used = sum(p.margin or p.notional for p in account.positions)
+        if used + margin > account.equity * lim.max_margin_usage * (1 + 1e-9) and lev > 1:
+            reasons.append("margin usage would exceed the limit")
+        correlated = risk_amount + sum(
+            p.risk
+            for p in account.positions
+            if p.side is req.side
+            and account.correlation(p.instrument, req.instrument.symbol)
+            >= lim.correlation_threshold
+        )
+        if correlated > account.equity * lim.max_correlated_risk * (1 + 1e-9):
+            reasons.append("correlated risk in this direction would exceed the limit")
+        if reasons:
+            return self._reject(req, reasons)
         st.seen_ids.add(req.client_id)
-        return RiskDecision(True, qty, (), risk_amount)
+        return RiskDecision(True, qty, (), risk_amount, margin, liq)
 
     def check_exit(self, client_id: str) -> RiskDecision:
         if client_id in self.state.seen_ids:

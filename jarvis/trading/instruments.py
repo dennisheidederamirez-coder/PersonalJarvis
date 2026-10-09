@@ -33,6 +33,8 @@ class Instrument:
     demo_tradable: bool = False
     #: whether a short position is possible in the simulation (perp-style)
     shortable: bool = True
+    #: maintenance margin rate of the simulated perpetual (lowest venue tier)
+    mmr: float = 0.005
 
     def round_qty(self, qty: float) -> float:
         if qty <= 0 or self.qty_step <= 0:

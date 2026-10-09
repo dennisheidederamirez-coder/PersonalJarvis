@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from jarvis.trading.instruments import Instrument
+from jarvis.trading.leverage import liquidation_price
 from jarvis.trading.strategies import Side
 
 
@@ -42,6 +43,9 @@ class Position:
     funding: float = 0.0
     reason: str = ""
     strategy: str = ""  # the strategy that owns the position (attribution)
+    leverage: float = 1.0
+    margin: float = 0.0  # isolated margin; the most an isolated position can lose
+    liquidation: float | None = None
 
     def unrealized(self, mark: float) -> float:
         return self.side.sign * (mark - self.entry) * self.qty
@@ -112,6 +116,8 @@ class PaperBroker:
         ts_ms: int,
         reason: str = "",
         strategy: str = "",
+        leverage: float = 1.0,
+        mmr: float = 0.005,
     ) -> Fill:
         if instrument.symbol in self.positions:
             raise RuntimeError("position already open")  # the risk manager prevents this
@@ -133,6 +139,13 @@ class PaperBroker:
             qty * abs(fill - stop),
             reason=reason,
             strategy=strategy,
+            leverage=leverage,
+            margin=abs(fill * qty) / leverage,
+            liquidation=(
+                liquidation_price(side, fill, qty, leverage, mmr=mmr, fee_rate=self.costs.fee_rate)
+                if leverage > 1
+                else None
+            ),
         )
         return Fill(client_id, instrument.symbol, "open", side, qty, fill, fee, slip, ts_ms, reason)
 
@@ -140,10 +153,18 @@ class PaperBroker:
         self, symbol: str, price: float, ts_ms: int, reason: str, client_id: str
     ) -> tuple[Fill, Trade]:
         pos = self.positions.pop(symbol)
-        fill = self.costs.fill_price(price, buy=pos.side is Side.SHORT)
-        fee = abs(fill * pos.qty) * self.costs.fee_rate
-        slip = abs(fill - price) * pos.qty
-        gross = pos.side.sign * (fill - pos.entry) * pos.qty
+        if reason == "liquidation":
+            # Isolated margin: the venue closes at the liquidation price and keeps
+            # what is left of the margin — the loss is the whole margin.
+            fill = price
+            gross = pos.side.sign * (fill - pos.entry) * pos.qty
+            fee = max(0.0, pos.margin + gross)  # the remaining margin is forfeited
+            slip = 0.0
+        else:
+            fill = self.costs.fill_price(price, buy=pos.side is Side.SHORT)
+            fee = abs(fill * pos.qty) * self.costs.fee_rate
+            slip = abs(fill - price) * pos.qty
+            gross = pos.side.sign * (fill - pos.entry) * pos.qty
         self.cash += gross - fee
         fees = pos.entry_fee + fee
         net = gross - fees - pos.funding
