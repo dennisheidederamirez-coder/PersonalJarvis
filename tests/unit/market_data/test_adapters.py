@@ -168,3 +168,10 @@ async def test_disagreeing_sources_mean_no_data_to_trade_on() -> None:
     )
     choice = choose(by, shifted, now_ms=NOW)
     assert choice.use is None and "disagree" in choice.reasons[0]
+
+
+async def test_three_minute_bars_where_the_venue_offers_them() -> None:
+    fake = FakeExchanges(NOW)
+    assert 3 * 60_000 in ADAPTERS["binance"]._INTERVALS and 3 * 60_000 in ADAPTERS["okx"]._INTERVALS
+    with pytest.raises(MarketDataError):  # Coinbase has no 3-minute granularity
+        await _adapter("coinbase", fake).bars(BTC_USD, Kind.SPOT, 3 * 60_000, T0, T0 + HOUR_MS)

@@ -132,6 +132,7 @@ class BybitAdapter(Adapter):
     BASE: Final = "https://api.bybit.com"
     _INTERVALS: Mapping[int, Any] = {
         MINUTE_MS: "1",
+        3 * MINUTE_MS: "3",
         5 * MINUTE_MS: "5",
         15 * MINUTE_MS: "15",
         HOUR_MS: "60",
@@ -230,6 +231,7 @@ class OkxAdapter(Adapter):
     BASE: Final = "https://www.okx.com"
     _INTERVALS: Mapping[int, Any] = {
         MINUTE_MS: "1m",
+        3 * MINUTE_MS: "3m",
         5 * MINUTE_MS: "5m",
         15 * MINUTE_MS: "15m",
         HOUR_MS: "1H",
@@ -303,6 +305,7 @@ class BinanceAdapter(Adapter):
     FUTURES: Final = "https://fapi.binance.com"
     _INTERVALS: Mapping[int, Any] = {
         MINUTE_MS: "1m",
+        3 * MINUTE_MS: "3m",
         5 * MINUTE_MS: "5m",
         15 * MINUTE_MS: "15m",
         HOUR_MS: "1h",

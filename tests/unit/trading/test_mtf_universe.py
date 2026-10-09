@@ -244,3 +244,14 @@ def test_research_instruments_can_be_backtested_but_not_demo_traded() -> None:
         EntryRequest("a", SOL_USD, Side.LONG, 100.0, 98.0), Account(10_000, (), {"SOL-USD": 100.0})
     )
     assert not v.approved and any("analysis-only" in r for r in v.reasons)
+
+
+def test_scalping_timeframes_resample_without_inventing_bars() -> None:
+    from jarvis.trading.timeframes import M1, M3, M5
+
+    rows = [(T0 + k * M1, 100.0, 101.0, 99.0, 100.0 + k % 5, 1.0) for k in range(30)]
+    m1 = make_series(BTC_USD, M1, rows, source="binance:perp:BTCUSDT")
+    m3, m5 = resample(m1, M3), resample(m1, M5)
+    assert (len(m3), len(m5)) == (10, 6)
+    assert m3.close[0] == m1.close[2] and m5.volume[0] == 5.0
+    assert list(align(m1, m5)[:6]) == [-1, -1, -1, -1, 0, 0]  # visible only once closed

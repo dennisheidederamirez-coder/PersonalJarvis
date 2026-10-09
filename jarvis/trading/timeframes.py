@@ -1,6 +1,8 @@
 """Multi-timeframe support without look-ahead.
 
-Supported intervals: 5m, 15m, 1h, 4h, 1d. A higher-timeframe value is used
+Supported intervals: 1m, 3m, 5m, 15m, 1h, 4h, 1d. Strategies on 1m-5m bars
+belong to the scalping research branch (docs/trading-scalping.md); anything
+shorter (seconds) needs trade or order-book data, not bars. A higher-timeframe value is used
 only once its bar has CLOSED: at a lower bar's close, a strategy sees the most
 recent higher bar whose close time is at or before that moment — never the
 higher bar that is still forming.
@@ -27,13 +29,15 @@ from jarvis.trading.data import DAY_MS, HOUR_MS, BarSeries, make_series
 from jarvis.trading.indicators import sma
 from jarvis.trading.strategies import Side, Strategy, Target
 
+M1: Final = 60_000
+M3: Final = 3 * 60_000
 M5: Final = 5 * 60_000
 M15: Final = 15 * 60_000
 H1: Final = HOUR_MS
 H4: Final = 4 * HOUR_MS
 D1: Final = DAY_MS
-SUPPORTED: Final = (M5, M15, H1, H4, D1)
-LABEL: Final = {M5: "5m", M15: "15m", H1: "1h", H4: "4h", D1: "1d"}
+SUPPORTED: Final = (M1, M3, M5, M15, H1, H4, D1)
+LABEL: Final = {M1: "1m", M3: "3m", M5: "5m", M15: "15m", H1: "1h", H4: "4h", D1: "1d"}
 
 
 def resample(series: BarSeries, interval_ms: int) -> BarSeries:
@@ -141,6 +145,8 @@ __all__ = [
     "H1",
     "H4",
     "LABEL",
+    "M1",
+    "M3",
     "M5",
     "M15",
     "SUPPORTED",
