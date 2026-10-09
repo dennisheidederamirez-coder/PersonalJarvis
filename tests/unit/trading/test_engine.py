@@ -162,4 +162,5 @@ def test_results_are_broken_down_by_year() -> None:
     result = run_backtest(series, SmaCross(10, 30))
     years = result.metrics["by_year"]
     assert set(years) <= {"2026", "2027"} and sum(y["trades"] for y in years.values()) == len(
-        result.trades)
+        result.trades
+    )

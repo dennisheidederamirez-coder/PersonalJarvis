@@ -378,7 +378,7 @@ def run_backtest(
     risk_limits = limits or RiskLimits(fee_rate=cost_model.fee_rate)
     trader = DemoTrader(
         PaperBroker(capital, cost_model),
-        RiskManager(risk_limits),
+        RiskManager(risk_limits, research=True),  # a backtest is research, never a live demo
         journal,
         leverage=dict(leverage or {}),
         funding_rates=dict(funding_rates) if funding_rates else None,
@@ -404,7 +404,9 @@ def run_backtest(
         if span
         and span[0] - 8 * HOUR_MS <= int(series.ts[start])
         and span[1] >= last_ts - 8 * HOUR_MS
-        else "partly observed" if span else "assumed"
+        else "partly observed"
+        if span
+        else "assumed"
     )
     return BacktestResult(
         "+".join(s.name for s in books),

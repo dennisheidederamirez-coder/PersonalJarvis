@@ -154,9 +154,19 @@ def _utc_day(ts_ms: int) -> str:
 
 
 class RiskManager:
-    def __init__(self, limits: RiskLimits | None = None, state: RiskState | None = None) -> None:
+    def __init__(
+        self,
+        limits: RiskLimits | None = None,
+        state: RiskState | None = None,
+        *,
+        research: bool = False,
+    ) -> None:
         self.limits = limits or RiskLimits()
         self.state = state or RiskState()
+        #: historical simulation only: instruments still in their analysis
+        #: phase may be SIMULATED; every other limit applies unchanged. A
+        #: live demo account never sets this.
+        self.research = research
 
     # ----------------------------------------------------------- monitoring
 
@@ -213,7 +223,7 @@ class RiskManager:
             reasons.append(f"kill switch on: {st.kill_reason}")
         if st.halted_day is not None and st.halted_day == st.day:
             reasons.append("daily loss limit reached")
-        if not req.instrument.demo_tradable:
+        if not req.instrument.demo_tradable and not self.research:
             reasons.append(f"{req.instrument.asset_class} is analysis-only in this phase")
         if req.side is Side.SHORT and not req.instrument.shortable:
             reasons.append("instrument cannot be shorted")

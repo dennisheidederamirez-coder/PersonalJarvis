@@ -229,3 +229,18 @@ def test_a_holdout_that_does_not_confirm_blocks_the_strategy() -> None:
         criteria=crit,
     )
     assert any("unstable" in r for r in shaky.reasons) and shaky.fold_consistency == 0.25
+
+
+def test_research_instruments_can_be_backtested_but_not_demo_traded() -> None:
+    from jarvis.trading.engine import run_backtest
+    from jarvis.trading.instruments import SOL_USD
+    from jarvis.trading.risk import Account, EntryRequest, RiskManager
+    from jarvis.trading.strategies import Side
+
+    sol = trending(3000, instrument=SOL_USD)
+    assert run_backtest(sol, SmaCross(10, 30)).trades  # history may be simulated
+    live = RiskManager()  # what a demo account uses
+    v = live.check_entry(
+        EntryRequest("a", SOL_USD, Side.LONG, 100.0, 98.0), Account(10_000, (), {"SOL-USD": 100.0})
+    )
+    assert not v.approved and any("analysis-only" in r for r in v.reasons)
