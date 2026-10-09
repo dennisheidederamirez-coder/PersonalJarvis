@@ -128,3 +128,53 @@ is authoritative.
   its own adapter.
 - **Spot gold** (XAU/USD) is not covered by any adapter. It needs a separate
   source whose licence is checked first.
+
+## Phase 3 results (SOL, XRP, BNB, LINK, HYPE, HBAR)
+
+Data (one-time, keyless, read-only): 1 495 requests, 107 MB.
+
+- **Binance USD-M perpetuals** with observed funding of the same venue.
+- **Binance spot.**
+- **OKX perpetuals** as a cross-check.
+- **History by coin:**
+  - SOL, XRP, BNB and LINK: 6 years.
+  - HBAR: 5.6 years on perpetuals.
+  - HYPE: 1.4 years on perpetuals (since 2025-05-30). Spot history on the
+    venue was only 15 days, which is too little to test.
+- **Slippage by liquidity:** 5–20 bps from each coin's median daily volume.
+
+Two parts, all with fees, slippage, funding and the unchanged risk limits:
+
+- **A: frozen parameters.** The BTC 4h trend, 4h breakout and 1d breakout
+  strategies keep the parameters chosen on BTC data *before* its holdout.
+  They were never fitted on these coins, so the whole period is out of
+  sample.
+  - Each coin is reported in full, before its last 20 % and in its last
+    20 %, and per year.
+  - 54 tests, significance level 0.05 / 54.
+- **B: walk-forward per coin.** The same small grids, with a 20 % untouched
+  holdout. 54 tests.
+
+Results:
+
+- **No combination qualified** in A or B. The lowest p-value was 0.0012
+  (SOL spot, 1d breakout) against a required 0.00093.
+- **The BTC 4h trend does not transfer.** It is positive on LINK (profit
+  factor 1.17, holdout 1.45) and slightly on XRP, flat on SOL, and negative
+  on BNB, HBAR and HYPE. It stays an unconfirmed research candidate.
+- **4h breakouts are mixed.**
+  - SOL is positive in 6 of 7 years.
+  - LINK and HBAR hit the drawdown kill switch early, and the backtest
+    then stops trading. Their numbers reflect the safety stop.
+- **Daily breakouts (frozen 20/20)** are the most consistent family across
+  markets.
+  - Full-period profit factor 1.3–2.7 on SOL, BNB, XRP (spot) and HBAR, as
+    well as on BTC and ETH spot in phase 2.
+  - The recent 20 % is mixed: BNB stays positive, SOL turns negative.
+  - With only 40–70 trades per coin, none is significant on its own.
+- **HYPE:** negative or insufficient on every strategy. HBAR: only the daily
+  breakout is positive (profit factor 1.33–1.55, recent period flat).
+- **Leverage (3x):** results are nearly identical to 1x. It adds no edge.
+
+Tests so far: phase 2 had 66 combinations, phase 3 had 54 (A) and 54 (B),
+**174 in total**. Every one is reported, including the losing ones.
