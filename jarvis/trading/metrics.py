@@ -71,4 +71,24 @@ def compute(
     }
 
 
-__all__ = ["PF_CAP", "compute", "max_drawdown", "profit_factor"]
+def by_strategy(trades: Sequence[Trade]) -> dict[str, dict[str, Any]]:
+    """Trade statistics per strategy, so each one is judged on its own record."""
+    groups: dict[str, list[Trade]] = {}
+    for t in trades:
+        groups.setdefault(t.strategy or "unknown", []).append(t)
+    out: dict[str, dict[str, Any]] = {}
+    for name, ts in sorted(groups.items()):
+        nets = [t.net for t in ts]
+        out[name] = {
+            "trades": len(ts),
+            "hit_rate": sum(1 for x in nets if x > 0) / len(ts),
+            "profit_factor": profit_factor(nets),
+            "expectancy": float(np.mean(nets)),
+            "avg_r": float(np.mean([t.r_multiple for t in ts])),
+            "net_pnl": float(sum(nets)),
+            "fees": float(sum(t.fees for t in ts)),
+        }
+    return out
+
+
+__all__ = ["PF_CAP", "by_strategy", "compute", "max_drawdown", "profit_factor"]

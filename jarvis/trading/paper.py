@@ -41,6 +41,7 @@ class Position:
     initial_risk: float  # qty * |entry - stop| at the fill
     funding: float = 0.0
     reason: str = ""
+    strategy: str = ""  # the strategy that owns the position (attribution)
 
     def unrealized(self, mark: float) -> float:
         return self.side.sign * (mark - self.entry) * self.qty
@@ -78,6 +79,7 @@ class Trade:
     r_multiple: float  # net / initial risk
     entry_reason: str
     exit_reason: str
+    strategy: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -109,6 +111,7 @@ class PaperBroker:
         take_profit: float | None,
         ts_ms: int,
         reason: str = "",
+        strategy: str = "",
     ) -> Fill:
         if instrument.symbol in self.positions:
             raise RuntimeError("position already open")  # the risk manager prevents this
@@ -129,6 +132,7 @@ class PaperBroker:
             slip,
             qty * abs(fill - stop),
             reason=reason,
+            strategy=strategy,
         )
         return Fill(client_id, instrument.symbol, "open", side, qty, fill, fee, slip, ts_ms, reason)
 
@@ -161,6 +165,7 @@ class PaperBroker:
             r,
             pos.reason,
             reason,
+            pos.strategy,
         )
         return Fill(
             client_id, symbol, "close", pos.side, pos.qty, fill, fee, slip, ts_ms, reason

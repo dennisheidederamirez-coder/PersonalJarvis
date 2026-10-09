@@ -94,6 +94,7 @@ def test_metrics() -> None:
 
 
 FORBIDDEN_IMPORTS = {
+    # network, exchanges, credentials
     "httpx",
     "requests",
     "aiohttp",
@@ -104,10 +105,16 @@ FORBIDDEN_IMPORTS = {
     "http.client",
     "jarvis.core.secrets",
     "keyring",
+    # models: a trade decision must come from tested rules, never from an AI opinion
+    "anthropic",
+    "openai",
+    "jarvis.brain",
+    "jarvis.missions",
+    "jarvis.society",
 }
 
 
-def test_the_package_has_no_network_exchange_or_credential_path() -> None:
+def test_the_package_has_no_network_exchange_credential_or_model_path() -> None:
     for path in PACKAGE.glob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):

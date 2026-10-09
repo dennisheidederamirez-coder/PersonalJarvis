@@ -27,6 +27,8 @@ objectively over time.
 | `metrics` | Trades, hit rate, profit factor, expectancy, average R, fees, slippage, funding, maximum drawdown, Sharpe, Sortino. |
 | `journal` | Every decision, approval, rejection, cancellation, fill, trade and risk event, in memory or SQLite. The SQLite journal also persists the risk state (kill switch, seen order ids). |
 | `signals`, `signal_eval` | External signals (e.g. TradingView alerts) as validated, deduplicated evidence, and an event study against random timing. See [External signals](trading-external-signals.md). |
+| `setups` | The strategy book. Only strategies with a `tradable` walk-forward verdict may open demo trades. Competing setups on one bar are ranked by the strategy's validated out-of-sample expectancy, then its p-value, then the setup's reward-to-risk, and go to the risk manager in that order. |
+| `signal_strategy` | External alerts as one more rule-based strategy, validated, ranked and attributed like every other. It acts at the first bar close after an alert *arrived*. |
 
 Defaults (`RiskLimits`):
 
@@ -41,6 +43,22 @@ Defaults (`CostModel`):
 - 0.01 % funding per 8 h
 
 Lifting the kill switch requires the exact phrase `reset kill switch`.
+
+## Several strategies, one account
+
+- Every strategy is validated and judged on its own: `metrics["by_strategy"]`
+  and the journal attribute every decision and trade to its strategy.
+- No strategy needs another one's consent. In particular, **no trade requires a
+  TradingView signal**. A rule-based strategy trades on its own tested entry
+  conditions. A signal-based strategy trades once its own verdict allows it.
+  An agreeing alert on another strategy's setup is recorded as
+  `confirmed_by`, as information only.
+- An open position is managed only by the strategy that opened it, so
+  results stay attributable.
+- Trade decisions come from pre-defined, tested rules. The guard test also
+  forbids model and agent imports (`anthropic`, `openai`, `jarvis.brain`,
+  `jarvis.missions`, `jarvis.society`) in this package. A model may comment on
+  research later, but it cannot decide a trade.
 
 ## Roadmap
 

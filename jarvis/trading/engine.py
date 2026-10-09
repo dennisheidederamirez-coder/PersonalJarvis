@@ -16,7 +16,7 @@ Per bar ``i`` of an instrument:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,12 +25,18 @@ from numpy.typing import NDArray
 
 from jarvis.trading.data import HOUR_MS, BarSeries, DataQuality, require_usable
 from jarvis.trading.journal import Journal, MemoryJournal
-from jarvis.trading.metrics import compute
+from jarvis.trading.metrics import by_strategy, compute
 from jarvis.trading.paper import CostModel, PaperBroker, Trade
 from jarvis.trading.risk import Account, EntryRequest, OpenPosition, RiskLimits, RiskManager
 from jarvis.trading.strategies import Strategy, Target
 
 MAX_RISK_GROWTH = 1.5  # an entry is cancelled if its stop risk grew beyond this at the open
+
+Candidate = tuple[Strategy, Target]
+#: Orders the entry candidates of one bar (best first) and drops the ones that
+#: may not trade; see ``setups.StrategyBook.rank``. Without one, candidates
+#: are tried in the order the strategies were given.
+Ranker = Callable[[BarSeries, int, list[Candidate]], list[Candidate]]
 
 
 @dataclass
@@ -41,6 +47,7 @@ class _Pending:
     qty: float = 0.0
     planned_risk: float = 0.0
     reason: str = ""
+    strategy: str = ""
 
 
 @dataclass
@@ -67,8 +74,18 @@ class DemoTrader:
         return self.broker.equity(self.marks)
 
     def process_bar(
-        self, series: BarSeries, i: int, strategy: Strategy, *, decide: bool = True
+        self,
+        series: BarSeries,
+        i: int,
+        strategies: Strategy | Sequence[Strategy],
+        *,
+        decide: bool = True,
+        rank: Ranker | None = None,
     ) -> None:
+        """One bar of one instrument. With several strategies, an open position
+        is managed only by the strategy that opened it; while flat, every
+        strategy proposes and the ranked candidates go to the risk manager in
+        order until one is approved — no strategy needs another's consent."""
         sym = series.instrument.symbol
         ts = int(series.ts[i])
         o, h, lo, c = (
@@ -95,11 +112,27 @@ class DemoTrader:
         if self.risk.state.kill_switch:
             self._queue_flatten(ts, "kill switch")
             return
-        if decide:
-            pos = self.broker.positions.get(sym)
-            target = strategy.decide(i, pos.side if pos else None)
+        if not decide:
+            return
+        books = [strategies] if not isinstance(strategies, Sequence) else list(strategies)
+        pos = self.broker.positions.get(sym)
+        if pos is not None:
+            owner = next((s for s in books if s.name == pos.strategy), None)
+            if owner is None:  # owner no longer active: stop / target still protect it
+                return
+            target = owner.decide(i, pos.side)
             if target is not None:
-                self._handle_target(series, ts, c, strategy, target)
+                self._handle_target(series, ts, c, owner, target)
+            return
+        candidates: list[Candidate] = []
+        for strategy in books:
+            target = strategy.decide(i, None)
+            if target is not None and target.side is not None:
+                candidates.append((strategy, target))
+        ordered = rank(series, i, candidates) if rank is not None else candidates
+        for strategy, target in ordered:
+            if self._handle_target(series, ts, c, strategy, target):
+                break
 
     def close_all(self, ts: int, reason: str) -> None:
         for sym in list(self.broker.positions):
@@ -121,7 +154,8 @@ class DemoTrader:
 
     def _handle_target(
         self, series: BarSeries, ts: int, close: float, strategy: Strategy, target: Target
-    ) -> None:
+    ) -> bool:
+        """Queue the exit and/or entry; True when something was queued."""
         sym = series.instrument.symbol
         pos = self.broker.positions.get(sym)
         side = target.side
@@ -151,6 +185,7 @@ class DemoTrader:
             if verdict.approved:
                 pending.entry, pending.qty = req, verdict.qty
                 pending.planned_risk, pending.reason = verdict.risk_amount, target.reason
+                pending.strategy = strategy.name
                 self.journal.record(
                     "approved",
                     ts,
@@ -175,6 +210,8 @@ class DemoTrader:
                 )
         if pending.close_reason or pending.entry:
             self._pending[sym] = pending
+            return True
+        return False
 
     def _execute_pending(self, series: BarSeries, ts: int, open_: float) -> None:
         sym = series.instrument.symbol
@@ -209,6 +246,7 @@ class DemoTrader:
             req.take_profit,
             ts,
             pending.reason,
+            strategy=pending.strategy,
         )
         self.journal.record("fill", ts, sym, _fill_dict(fill))
 
@@ -268,8 +306,9 @@ class BacktestResult:
 
 def run_backtest(
     series: BarSeries,
-    strategy: Strategy,
+    strategy: Strategy | Sequence[Strategy],
     *,
+    rank: Ranker | None = None,
     capital: float = 10_000.0,
     costs: CostModel | None = None,
     limits: RiskLimits | None = None,
@@ -278,17 +317,23 @@ def run_backtest(
     journal: Journal | None = None,
 ) -> BacktestResult:
     """Replay *series*; trade only in ``[start, end)``. Bars before ``start``
-    serve as indicator history (warm-up), never as tradable bars."""
+    serve as indicator history (warm-up), never as tradable bars. Several
+    strategies share one account; ``metrics["by_strategy"]`` keeps each one's
+    trades apart."""
     quality = require_usable(series)
     end = len(series) if end is None else min(end, len(series))
     if not 0 <= start < end:
         raise ValueError("empty backtest window")
-    strategy.prepare(series)
+    books = [strategy] if not isinstance(strategy, Sequence) else list(strategy)
+    if len({s.name for s in books}) != len(books):
+        raise ValueError("strategy names must be unique (they attribute trades)")
+    for s in books:
+        s.prepare(series)
     journal = journal or MemoryJournal()
     trader = DemoTrader(PaperBroker(capital, costs or CostModel()), RiskManager(limits), journal)
     curve: list[float] = []
     for i in range(start, end):
-        trader.process_bar(series, i, strategy, decide=i < end - 1)
+        trader.process_bar(series, i, books, decide=i < end - 1, rank=rank)
         curve.append(trader.equity())
     last_ts = int(series.ts[end - 1])
     trader.close_all(last_ts, "end of test")
@@ -296,15 +341,19 @@ def run_backtest(
         curve[-1] = trader.equity()
     equity = np.asarray([capital, *curve], dtype=np.float64)
     rejections = sum(1 for e in getattr(journal, "entries", []) if e[0] == "rejected")
+    metrics = compute(
+        trader.trades, equity, capital=capital, periods_per_year=series.periods_per_year
+    )
+    metrics["by_strategy"] = by_strategy(trader.trades)
     return BacktestResult(
-        strategy.name,
-        dict(strategy.params),
+        "+".join(s.name for s in books),
+        dict(books[0].params) if len(books) == 1 else {s.name: dict(s.params) for s in books},
         series.instrument.symbol,
         int(series.ts[start]),
         last_ts,
         tuple(trader.trades),
         equity,
-        compute(trader.trades, equity, capital=capital, periods_per_year=series.periods_per_year),
+        metrics,
         quality,
         rejections,
         trader.risk.state.kill_switch,

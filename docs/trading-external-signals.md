@@ -69,10 +69,15 @@ connection secret travels in the JSON body.
      minimum event count is required.
    - It also counts signals that cannot be matched to a bar or whose price
      disagrees with the independent data.
-6. **Added value in backtests** (next): an informative signal family becomes
-   a filter or entry rule of a strategy. It must improve the walk-forward
-   out-of-sample result of `validation.py` against the same strategy without
-   it. Otherwise it is not used.
+6. **As a strategy of its own**: `signal_strategy.SignalStrategy` turns a
+   signal family into an ordinary strategy with ATR stop and target, an
+   exit on an opposite signal and a maximum holding time.
+   - It goes through the same walk-forward validation and only trades once
+     its own verdict allows it; random alerts earn no permission.
+   - Signals are optional for every other strategy: an agreeing alert is
+     only recorded as `confirmed_by`.
+   - Each strategy is evaluated separately, so the record shows over time
+     whether the alerts add anything.
 
 ## Open decisions
 
