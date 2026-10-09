@@ -1,0 +1,314 @@
+"""One bar loop for backtests and the live demo — the same execution rules.
+
+Per bar ``i`` of an instrument:
+
+1. **open** — execute what was decided at the previous close (exits first,
+   then entries). An entry whose stop the market already gapped through is
+   cancelled; one whose risk grew by more than half is cancelled.
+2. **intrabar** — stop and take-profit against the bar's range; a gap fills
+   at the open; if both levels are inside one bar the STOP is assumed first
+   (the conservative reading of an unknown path).
+3. **close** — funding, mark-to-market, risk observation (daily halt, kill
+   switch), then the strategy's target, checked by the risk manager and
+   queued for the next open. Decisions use bar ``i``'s close and execute at
+   bar ``i+1``'s open: no decision ever trades at a price it could not know.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
+
+from jarvis.trading.data import HOUR_MS, BarSeries, DataQuality, require_usable
+from jarvis.trading.journal import Journal, MemoryJournal
+from jarvis.trading.metrics import compute
+from jarvis.trading.paper import CostModel, PaperBroker, Trade
+from jarvis.trading.risk import Account, EntryRequest, OpenPosition, RiskLimits, RiskManager
+from jarvis.trading.strategies import Strategy, Target
+
+MAX_RISK_GROWTH = 1.5  # an entry is cancelled if its stop risk grew beyond this at the open
+
+
+@dataclass
+class _Pending:
+    close_reason: str | None = None
+    close_id: str = ""
+    entry: EntryRequest | None = None
+    qty: float = 0.0
+    planned_risk: float = 0.0
+    reason: str = ""
+
+
+@dataclass
+class DemoTrader:
+    broker: PaperBroker
+    risk: RiskManager
+    journal: Journal = field(default_factory=MemoryJournal)
+    trades: list[Trade] = field(default_factory=list)
+    marks: dict[str, float] = field(default_factory=dict)
+    on_trade: Callable[[Trade], None] | None = None
+    _pending: dict[str, _Pending] = field(default_factory=dict)
+
+    # ------------------------------------------------------------------ api
+
+    def account(self, *, excluding: str | None = None) -> Account:
+        positions = [
+            OpenPosition(s, p.side, p.qty, p.entry, p.stop, self.marks.get(s, p.entry))
+            for s, p in self.broker.positions.items()
+            if s != excluding
+        ]
+        return Account(self.broker.equity(self.marks), positions, dict(self.marks))
+
+    def equity(self) -> float:
+        return self.broker.equity(self.marks)
+
+    def process_bar(
+        self, series: BarSeries, i: int, strategy: Strategy, *, decide: bool = True
+    ) -> None:
+        sym = series.instrument.symbol
+        ts = int(series.ts[i])
+        o, h, lo, c = (
+            float(series.open[i]),
+            float(series.high[i]),
+            float(series.low[i]),
+            float(series.close[i]),
+        )
+        self._execute_pending(series, ts, o)
+        self._check_exits(sym, ts, o, h, lo)
+        self.marks[sym] = c
+        self.broker.accrue_funding(sym, c, series.interval_ms / HOUR_MS)
+        for event in self.risk.observe(ts, self.equity()):
+            self.journal.record(
+                "risk_event",
+                ts,
+                sym,
+                {
+                    "event": event,
+                    "equity": self.equity(),
+                    "reason": self.risk.state.kill_reason,
+                },
+            )
+        if self.risk.state.kill_switch:
+            self._queue_flatten(ts, "kill switch")
+            return
+        if decide:
+            pos = self.broker.positions.get(sym)
+            target = strategy.decide(i, pos.side if pos else None)
+            if target is not None:
+                self._handle_target(series, ts, c, strategy, target)
+
+    def close_all(self, ts: int, reason: str) -> None:
+        for sym in list(self.broker.positions):
+            self._close(
+                sym,
+                self.marks.get(sym, self.broker.positions[sym].entry),
+                ts,
+                reason,
+                f"close:{sym}:{ts}:{reason}",
+            )
+
+    # ------------------------------------------------------------ internals
+
+    def _queue_flatten(self, ts: int, reason: str) -> None:
+        for sym in self.broker.positions:
+            pending = self._pending.setdefault(sym, _Pending())
+            pending.close_reason, pending.close_id = reason, f"flatten:{sym}:{ts}"
+            pending.entry = None
+
+    def _handle_target(
+        self, series: BarSeries, ts: int, close: float, strategy: Strategy, target: Target
+    ) -> None:
+        sym = series.instrument.symbol
+        pos = self.broker.positions.get(sym)
+        side = target.side
+        decision_id = f"{strategy.name}:{sym}:{ts}:{side.value if side else 'flat'}"
+        self.journal.record(
+            "decision",
+            ts,
+            sym,
+            {
+                "strategy": strategy.name,
+                "target": side.value if side else "flat",
+                "stop": target.stop,
+                "take_profit": target.take_profit,
+                "reason": target.reason,
+                "price": close,
+            },
+        )
+        pending = _Pending()
+        if pos is not None and pos.side is not side:
+            pending.close_reason = target.reason or "strategy exit"
+            pending.close_id = f"exit:{decision_id}"
+        if side is not None and target.stop is not None and (pos is None or pos.side is not side):
+            req = EntryRequest(
+                decision_id, series.instrument, side, close, target.stop, target.take_profit
+            )
+            verdict = self.risk.check_entry(req, self.account(excluding=sym))
+            if verdict.approved:
+                pending.entry, pending.qty = req, verdict.qty
+                pending.planned_risk, pending.reason = verdict.risk_amount, target.reason
+                self.journal.record(
+                    "approved",
+                    ts,
+                    sym,
+                    {
+                        "client_id": req.client_id,
+                        "qty": verdict.qty,
+                        "risk": verdict.risk_amount,
+                        "side": side.value,
+                    },
+                )
+            else:
+                self.journal.record(
+                    "rejected",
+                    ts,
+                    sym,
+                    {
+                        "client_id": req.client_id,
+                        "side": side.value,
+                        "reasons": list(verdict.reasons),
+                    },
+                )
+        if pending.close_reason or pending.entry:
+            self._pending[sym] = pending
+
+    def _execute_pending(self, series: BarSeries, ts: int, open_: float) -> None:
+        sym = series.instrument.symbol
+        pending = self._pending.pop(sym, None)
+        if pending is None:
+            return
+        if pending.close_reason and sym in self.broker.positions:
+            self._close(sym, open_, ts, pending.close_reason, pending.close_id)
+        req = pending.entry
+        if req is None or self.risk.state.kill_switch:
+            return
+        gapped = req.side.sign * (open_ - req.stop) <= 0
+        risk_now = pending.qty * abs(open_ - req.stop)
+        if gapped or risk_now > pending.planned_risk * MAX_RISK_GROWTH:
+            self.journal.record(
+                "cancelled",
+                ts,
+                sym,
+                {
+                    "client_id": req.client_id,
+                    "reason": "gapped through the stop" if gapped else "risk grew at the open",
+                },
+            )
+            return
+        fill = self.broker.open(
+            req.client_id,
+            req.instrument,
+            req.side,
+            pending.qty,
+            open_,
+            req.stop,
+            req.take_profit,
+            ts,
+            pending.reason,
+        )
+        self.journal.record("fill", ts, sym, _fill_dict(fill))
+
+    def _check_exits(self, sym: str, ts: int, o: float, h: float, lo: float) -> None:
+        pos = self.broker.positions.get(sym)
+        if pos is None:
+            return
+        s = pos.side.sign
+        stop_hit = (lo <= pos.stop) if s > 0 else (h >= pos.stop)
+        tp = pos.take_profit
+        tp_hit = tp is not None and ((h >= tp) if s > 0 else (lo <= tp))
+        if stop_hit:
+            gap = (o <= pos.stop) if s > 0 else (o >= pos.stop)
+            self._close(sym, o if gap else pos.stop, ts, "stop", f"stop:{pos.client_id}")
+        elif tp_hit and tp is not None:
+            gap = (o >= tp) if s > 0 else (o <= tp)
+            self._close(sym, o if gap else tp, ts, "take_profit", f"tp:{pos.client_id}")
+
+    def _close(self, sym: str, price: float, ts: int, reason: str, client_id: str) -> None:
+        if not self.risk.check_exit(client_id).approved:
+            self.journal.record(
+                "rejected", ts, sym, {"client_id": client_id, "reasons": ["duplicate order"]}
+            )
+            return
+        fill, trade = self.broker.close(sym, price, ts, reason, client_id)
+        self.trades.append(trade)
+        self.journal.record("fill", ts, sym, _fill_dict(fill))
+        self.journal.record("trade", ts, sym, trade.to_dict())
+        if self.on_trade is not None:
+            self.on_trade(trade)
+
+
+def _fill_dict(fill: Any) -> dict[str, Any]:
+    return {
+        f: (getattr(fill, f).value if f == "side" else getattr(fill, f))
+        for f in fill.__dataclass_fields__
+    }
+
+
+# ------------------------------------------------------------------ backtest
+
+
+@dataclass(frozen=True)
+class BacktestResult:
+    strategy: str
+    params: dict[str, Any]
+    symbol: str
+    start_ms: int
+    end_ms: int
+    trades: tuple[Trade, ...]
+    equity: NDArray[np.float64]
+    metrics: dict[str, Any]
+    quality: DataQuality
+    rejections: int
+    kill_switch: bool
+
+
+def run_backtest(
+    series: BarSeries,
+    strategy: Strategy,
+    *,
+    capital: float = 10_000.0,
+    costs: CostModel | None = None,
+    limits: RiskLimits | None = None,
+    start: int = 0,
+    end: int | None = None,
+    journal: Journal | None = None,
+) -> BacktestResult:
+    """Replay *series*; trade only in ``[start, end)``. Bars before ``start``
+    serve as indicator history (warm-up), never as tradable bars."""
+    quality = require_usable(series)
+    end = len(series) if end is None else min(end, len(series))
+    if not 0 <= start < end:
+        raise ValueError("empty backtest window")
+    strategy.prepare(series)
+    journal = journal or MemoryJournal()
+    trader = DemoTrader(PaperBroker(capital, costs or CostModel()), RiskManager(limits), journal)
+    curve: list[float] = []
+    for i in range(start, end):
+        trader.process_bar(series, i, strategy, decide=i < end - 1)
+        curve.append(trader.equity())
+    last_ts = int(series.ts[end - 1])
+    trader.close_all(last_ts, "end of test")
+    if curve:
+        curve[-1] = trader.equity()
+    equity = np.asarray([capital, *curve], dtype=np.float64)
+    rejections = sum(1 for e in getattr(journal, "entries", []) if e[0] == "rejected")
+    return BacktestResult(
+        strategy.name,
+        dict(strategy.params),
+        series.instrument.symbol,
+        int(series.ts[start]),
+        last_ts,
+        tuple(trader.trades),
+        equity,
+        compute(trader.trades, equity, capital=capital, periods_per_year=series.periods_per_year),
+        quality,
+        rejections,
+        trader.risk.state.kill_switch,
+    )
+
+
+__all__ = ["BacktestResult", "DemoTrader", "run_backtest"]
