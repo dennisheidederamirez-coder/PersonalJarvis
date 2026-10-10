@@ -4356,6 +4356,17 @@ class CodexConfig(BaseModel):
     binary_path: str = ""
 
 
+class TradingDashboardConfig(BaseModel):
+    """``[trading_dashboard]`` — the read-only paper-trading dashboard.
+
+    ``journal_path`` is the paper job's SQLite journal. Empty = the default
+    ``<memory.data_dir>/trading/paper_journal.sqlite``. The dashboard only
+    ever opens it read-only. Read by ``jarvis/ui/web/trading_routes.py``.
+    """
+
+    journal_path: str = ""
+
+
 class TeamProxyConfig(BaseModel):
     """Client-side team / hosted-proxy mode (2026-06-20 team-proxy spec §4).
 
@@ -4756,6 +4767,8 @@ class JarvisConfig(BaseModel):
     pointer: PointerConfig = Field(default_factory=PointerConfig)
     # [codex] — OpenAI Codex CLI integration (binary path override).
     codex: CodexConfig = Field(default_factory=CodexConfig)
+    # [trading_dashboard] — where the read-only paper-trading dashboard reads.
+    trading_dashboard: TradingDashboardConfig = Field(default_factory=TradingDashboardConfig)
     # [team_proxy] — client-side team/hosted-proxy mode (2026-06-20 spec). When
     # enabled, providers are routed through a shared key proxy via a per-user
     # token instead of holding real vendor keys locally.

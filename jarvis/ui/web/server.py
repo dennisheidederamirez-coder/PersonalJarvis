@@ -564,6 +564,7 @@ class WebServer:
         from .telephony_routes import router as telephony_router
         from .tool_model_routes import router as tool_model_router
         from .tools_routes import router as tools_router
+        from .trading_routes import router as trading_router
         from .update_routes import router as update_router
         from .voice_call_routes import router as voice_call_router
         from .wiki_routes import router as wiki_router
@@ -647,6 +648,8 @@ class WebServer:
         app.include_router(cli_router)
         # Spend & Tokens — a read model over sessions/missions/agent-chat.
         app.include_router(costs_router)
+        # Paper-trading dashboard — a read-only model over the paper job's journal.
+        app.include_router(trading_router)
         # Command Registry — the one machine-readable catalog of app commands
         # (consumed by the app-command brain tool, the UI, CLI, and docs gen).
         app.include_router(commands_router)
