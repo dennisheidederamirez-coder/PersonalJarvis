@@ -258,6 +258,7 @@
     "mcps": "MCP",
     "sessions": "转录",
     "costs": "支出",
+    "trading": "交易（模拟）",
     "visualization": "作品",
     "clis": "CLI",
     "cli_test_hub": "CLI 测试中心",

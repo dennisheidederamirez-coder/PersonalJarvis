@@ -96,6 +96,8 @@ class Overview(BaseModel):
 class Decision(BaseModel):
     id: int
     ts_ms: int
+    """When it happened: a decision at its bar's close, an execution at the
+    bar's open, a job note at the run."""
     kind: str
     group: str
     """signal / execution / no_trade / risk."""
@@ -128,7 +130,8 @@ class StreamStatus(BaseModel):
     """position_open / order_pending / waiting / no_signal / data_problem /
     kill_switch / not_started."""
     data_status: str
-    last_bar_ms: int | None = None
+    last_close_ms: int | None = None
+    """Close time of the newest processed bar (the journal stores open times)."""
     next_close_ms: int | None = None
     last_event: Decision | None = None
     position_side: str | None = None
@@ -282,8 +285,9 @@ class StreamHealth(BaseModel):
     interval: str
     data_status: str
     data_code: str
-    last_bar_ms: int | None = None
-    expected_bar_ms: int
+    last_close_ms: int | None = None
+    expected_close_ms: int
+    """Close time of the newest bar that has closed by now."""
     lag_bars: int | None = None
     stale: bool
 

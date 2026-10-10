@@ -201,7 +201,7 @@ def test_every_stream_has_a_status(run: PaperRun) -> None:
             "data_problem",
             "kill_switch",
         }
-        assert s.last_event is not None and s.last_bar_ms is not None
+        assert s.last_event is not None and s.last_close_ms is not None
         assert s.interval == ("1d" if s.id.startswith("A:") else "4h")
 
 
@@ -319,3 +319,17 @@ def test_equity_points_sit_at_the_bar_close(run: PaperRun) -> None:
     assert b.points[-1].ts_ms == bars[-1].ts_ms + H4
     a = next(e for e in perf.equity if e.candidate == "A")
     assert all(p.ts_ms % D1 == 0 for p in a.points[1:])
+
+
+def test_decisions_are_dated_at_the_bar_close(tmp_path: Path) -> None:
+    run = run_paper_test(tmp_path, days=0, warmup_days=5)
+    bar_open = run.now[0] - 5 * 60_000 - H4  # the 4h bar that closed five minutes ago
+    run.journal.commit(
+        [
+            ("no_signal", bar_open, "BTC-USD", {"strategy": "B:BTC-USD", "reason": "no SMA x"}),
+            ("bar", bar_open, "BTC-USD", {"stream": "B:BTC-USD", "equity": 1.0, "close": 1.0}),
+        ],
+        {},
+    )
+    item = v.decisions(_ctx(run), group="no_trade", limit=1).items[0]
+    assert item.ts_ms == bar_open + H4

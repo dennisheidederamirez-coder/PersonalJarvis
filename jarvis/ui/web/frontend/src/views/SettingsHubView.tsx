@@ -81,6 +81,9 @@ const PetsTab = lazy(() =>
 const CostsTab = lazy(() =>
   import("@/views/CostsView").then((m) => ({ default: m.CostsView })),
 );
+const TradingTab = lazy(() =>
+  import("@/views/TradingDeskView").then((m) => ({ default: m.TradingDeskView })),
+);
 const FeedbackTab = lazy(() =>
   import("@/views/feedback/FeedbackView").then((m) => ({
     default: m.FeedbackView,
@@ -99,6 +102,7 @@ type HubNavId =
   | "apikeys"
   | "computers"
   | "costs"
+  | "trading"
   | "feedback";
 
 const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] = [
@@ -120,7 +124,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
   },
   {
     labelKey: "settings_hub.group_activity",
-    ids: ["costs", "feedback"],
+    ids: ["costs", "trading", "feedback"],
   },
 ];
 
@@ -136,6 +140,7 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
   shortcuts: ShortcutsTab,
   pets: PetsTab,
   costs: CostsTab,
+  trading: TradingTab,
   feedback: FeedbackTab,
 };
 
@@ -167,6 +172,8 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "pets", highlight: "pets" };
     case "costs":
       return { content: "costs", highlight: "costs" };
+    case "trading":
+      return { content: "trading", highlight: "trading" };
     case "feedback":
       return { content: "feedback", highlight: "feedback" };
     case "settings":

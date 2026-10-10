@@ -9,7 +9,7 @@
  * A second hand-written list anywhere would be the classic drift trap (AP-4):
  * a section added here would silently never appear on the deck.
  */
-import { KeyRound, type LucideIcon } from "lucide-react";
+import { ChartCandlestick, KeyRound, type LucideIcon } from "lucide-react";
 import {
   AgentsIcon,
   ArtifactsIcon,
@@ -183,6 +183,9 @@ export const NAV_GROUPS: NavItem[][] = [
     // Spend & Tokens — every token the app spent, priced per provider, model
     // and role. It reports, it does not configure.
     { id: "costs", labelKey: "nav.costs", icon: SpendIcon, fallbackLabel: "Spend" },
+    // Trading (paper) — the read-only dashboard over the paper-trading job. It
+    // shows, it never trades or configures.
+    { id: "trading", labelKey: "nav.trading", icon: ChartCandlestick, fallbackLabel: "Trading" },
     { id: "socials", labelKey: "nav.socials", icon: SocialsIcon },
   ],
   // 4) System. API Keys also fronts the former "Telephony" screen — the
@@ -283,5 +286,6 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "shortcuts",
   "pets",
   "costs",
+  "trading",
   "feedback",
 ];

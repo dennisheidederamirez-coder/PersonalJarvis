@@ -100,9 +100,9 @@ class JournalReader:
         path = str(self.path)
         try:
             st = self.path.stat()
-        except FileNotFoundError:
+        except FileNotFoundError:  # reported as SourceState.MISSING; the UI explains it
             return ReadFailure(path, SourceState.MISSING, "no journal at this path")
-        except OSError as exc:
+        except OSError as exc:  # reported as SourceState.ERROR with the OS message
             return ReadFailure(path, SourceState.ERROR, f"cannot stat the journal: {exc}")
         key = (st.st_mtime_ns, st.st_size)
         with self._lock:
@@ -179,13 +179,13 @@ class JournalReader:
         for key, value in state_rows:
             try:
                 state[str(key)] = json.loads(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # counted in bad_rows and logged once below
                 bad += 1
         rows: list[JournalRow] = []
         for rid, ts, kind, sym, data in reversed(raw):
             try:
                 decoded = json.loads(data)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # counted in bad_rows and logged once below
                 bad += 1
                 continue
             if not isinstance(decoded, dict):
@@ -196,7 +196,7 @@ class JournalReader:
         if risk is not None:
             try:
                 risk_state = json.loads(risk)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # counted in bad_rows and logged once below
                 bad += 1
         if bad:
             log.warning("trading journal: %d undecodable rows skipped", bad)

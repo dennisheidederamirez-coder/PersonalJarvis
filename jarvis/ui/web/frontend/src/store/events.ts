@@ -63,6 +63,8 @@ export type SectionId =
   | "sessions"
   // Spend & Tokens — what every provider, model and role actually cost.
   | "costs"
+  // Trading (paper): the read-only dashboard over the paper-trading job.
+  | "trading"
   | "clis"
   | "cli-test-hub"
   | "board"
@@ -123,6 +125,7 @@ export const SECTION_IDS = [
   "mcps",
   "sessions",
   "costs",
+  "trading",
   "clis",
   "cli-test-hub",
   "board",
@@ -219,6 +222,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   mcps: "MCPs",
   sessions: "Transcription",
   costs: "Spend",
+  trading: "Trading",
   clis: "CLIs",
   "cli-test-hub": "CLI Test Hub",
   board: "Board",

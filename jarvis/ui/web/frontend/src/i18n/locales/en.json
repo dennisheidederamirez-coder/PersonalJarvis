@@ -258,6 +258,7 @@
     "mcps": "MCPs",
     "sessions": "Transcription",
     "costs": "Spend",
+    "trading": "Trading (paper)",
     "visualization": "Artifacts",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",

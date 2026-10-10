@@ -32,6 +32,8 @@ KNOWN: frozenset[str] = frozenset(
         "sessions",
         # Spend & Tokens.
         "costs",
+        # Trading (paper): the read-only paper-trading dashboard.
+        "trading",
         "clis",
         "cli-test-hub",
         "board",
@@ -152,6 +154,9 @@ _ALIASES: dict[str, str] = {
     "token": "costs",
     "tokens": "costs",
     "spend": "costs",
+    "paper trading": "trading",
+    "paper-trading": "trading",
+    "trading dashboard": "trading",
     "spending": "costs",
     "billing": "costs",
     "costes": "costs",  # i18n-allow: input vocab

@@ -258,6 +258,7 @@
     "mcps": "MCPs",
     "sessions": "Transcripción",
     "costs": "Gastos",
+    "trading": "Trading (simulado)",
     "visualization": "Artefactos",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",

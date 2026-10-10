@@ -49,6 +49,8 @@ GROUPS: Final = {
 _GROUP_OF: Final = {k: g for g, kinds in GROUPS.items() for k in kinds}
 _JOB_INCIDENTS: Final = ("job_refused", "job_expired", "job_disabled")
 _CLIENT_PREFIXES: Final = ("stop:", "tp:", "liq:", "exit:", "flatten:")
+#: Engine kinds decided at a bar's close but journaled under its open time.
+_AT_CLOSE: Final = frozenset({"decision", "approved", "rejected", "no_signal", "hold"})
 _RISK_EVENTS: Final = {"kill_switch": "kill_switch", "daily_halt": "daily_loss_limit"}
 
 
@@ -64,6 +66,7 @@ class DashboardContext:
     snap: JournalSnapshot | None
     failure: ReadFailure | None
     stream_of: dict[int, str | None] = field(default_factory=dict)
+    intervals: dict[str, int] = field(default_factory=dict)
     signals: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     @property
@@ -91,6 +94,7 @@ def context(
         return DashboardContext(spec, now_ms, None, result)
     ctx = DashboardContext(spec, now_ms, result, None)
     ctx.stream_of = _attribute(result.rows, set(spec.candidates()))
+    ctx.intervals = {st.id: st.interval_ms for st in spec.streams}
     for r in result.rows:
         if r.kind == "decision":
             key = f"{r.data.get('strategy')}:{r.symbol}:{r.ts_ms}:{r.data.get('target')}"
@@ -471,9 +475,13 @@ def _decision(ctx: DashboardContext, r: JournalRow) -> s.Decision:
     if isinstance(cid, str) and cid in ctx.signals:
         signal_code, signal_reason = ctx.signals[cid]
     side = d.get("side") or (d.get("target") if r.kind == "decision" else None)
+    ts = r.ts_ms
+    if r.kind in _AT_CLOSE and stream and ("strategy" in d or "client_id" in d):
+        # the engine journals decisions under the bar's OPEN time; they are made at its close
+        ts += ctx.intervals.get(stream, 0)
     return s.Decision(
         id=r.id,
-        ts_ms=r.ts_ms,
+        ts_ms=ts,
         kind=r.kind,
         group=_GROUP_OF.get(r.kind, "other"),
         symbol=r.symbol,
@@ -499,7 +507,7 @@ def _f(value: Any) -> float | None:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # a non-numeric journal field shows as '—', not as an error
         return None
 
 
@@ -597,7 +605,7 @@ def strategies(ctx: DashboardContext) -> s.StrategiesView:
                 },
                 status=status,
                 data_status=ds,
-                last_bar_ms=int(lb) if lb is not None else None,
+                last_close_ms=int(lb) + st.interval_ms if lb is not None else None,
                 next_close_ms=int(lb) + 2 * st.interval_ms if lb is not None else None,
                 last_event=_decision(ctx, latest[st.id]) if st.id in latest else None,
                 position_side=str(mine["side"]) if mine else None,
@@ -838,8 +846,8 @@ def health(ctx: DashboardContext, *, runs: int = 30, incidents: int = 50) -> s.H
                 interval=LABEL.get(iv, f"{iv}ms"),
                 data_status=ds,
                 data_code="ok" if ds == "ok" else classify("no_signal", f"data: {ds}"),
-                last_bar_ms=int(lb) if lb is not None else None,
-                expected_bar_ms=expected,
+                last_close_ms=int(lb) + iv if lb is not None else None,
+                expected_close_ms=expected + iv,
                 lag_bars=lag,
                 stale=bool(late or (lag is not None and lag > ctx.spec.max_data_age_bars)),
             )

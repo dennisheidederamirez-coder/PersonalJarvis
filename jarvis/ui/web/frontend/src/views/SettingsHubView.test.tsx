@@ -79,6 +79,7 @@ vi.mock("@/views/TelephonyView", () => ({
 }));
 vi.mock("@/views/PetsView", () => ({ PetsView: stub("TAB_PETS") }));
 vi.mock("@/views/CostsView", () => ({ CostsView: stub("TAB_COSTS") }));
+vi.mock("@/views/TradingDeskView", () => ({ TradingDeskView: stub("TAB_TRADING") }));
 vi.mock("@/views/feedback/FeedbackView", () => ({
   FeedbackView: stub("TAB_FEEDBACK"),
 }));
@@ -95,6 +96,7 @@ const NAV_IDS = [
   "socials",
   "apikeys",
   "costs",
+  "trading",
   "feedback",
 ] as const;
 
@@ -190,6 +192,7 @@ describe("SettingsHubView tab resolution", () => {
     ["apikeys", "TAB_APIKEYS"],
     ["pets", "TAB_PETS"],
     ["costs", "TAB_COSTS"],
+    ["trading", "TAB_TRADING"],
     ["feedback", "TAB_FEEDBACK"],
     // Merged-in ids land on the tab hosting their content.
     ["taskbar", "TAB_SETTINGS"],
