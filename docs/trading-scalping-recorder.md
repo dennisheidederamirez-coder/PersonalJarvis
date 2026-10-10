@@ -1,7 +1,32 @@
-# Order-book and liquidation recorder — concept (not built, not running)
+# Order-book and liquidation recorder (built, offline-tested, never started)
 
-Status: **concept only.** No WebSocket connection and no background recorder
-is active. Each recording session needs the owner's explicit start.
+Status (2026-10-10): `jarvis/market_data/recorder.py` is **built and tested
+offline** with fake streams. It has **never connected.** Each session needs the
+owner's explicit approval, and the CLI refuses without `--owner-approved`.
+
+**As built:** Binance USD-M only. It records `<sym>@depth20@500ms` (top-20
+partial-book snapshots: no diff sync, so no sync state can drift), `@aggTrade`
+and `@forceOrder` for BTCUSDT and ETHUSDT on ONE combined-stream connection.
+The diff-stream and OKX designs below are kept as later options.
+
+**Checked (2026-10):**
+
+- Market streams are public and need no key.
+- A connection may last 24 h; the limits are 10 *incoming* client messages per second (we send none, since streams are in the URL) and 200 streams per connection (we use 6).
+- `forceOrder` pushes only the latest liquidation per symbol per 1000 ms.
+
+**Stop paths, every one tested offline:**
+
+1. **Deadline:** checked before each receive, and every receive is bounded by the time left, so an endless stream, a silent socket and an open that never completes all stop on time.
+2. **Outer timeout:** `asyncio.timeout(duration + 30 s)` around the whole session.
+3. **Watchdog:** a thread that ends the process at duration + 90 s, even if the event loop is blocked (tested in a subprocess).
+4. **Other stops:** a stop file, a storage cap (200 MB), or more than 3 jittered reconnects.
+
+The duration is capped at 60 min and longer values are refused. Nothing
+restarts or schedules it.
+
+**Expected size for 60 min:** about 14,400 book snapshots, about 15 MB, plus
+roughly 50,000–150,000 trades at 5–10 MB. That is about 20–30 MB in total.
 
 ## Why a recorder
 

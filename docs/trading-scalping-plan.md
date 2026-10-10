@@ -99,7 +99,7 @@ No fill at an ideal bar price.
 | P1 | Kline cost model calibrated against short trade samples (`aggTrades`, a few hours) | **approved, done**; to be repeated |
 | P2 | Backtest runner: candidates × BTC/ETH × 1m/3m/5m on train/validation, with frozen grids | after P1 |
 | P2 | Fill-model check: kline simulation vs tape simulation on the sample windows | after P1 |
-| P3 | Optional order-book / liquidation recorder (public WebSocket, time-boxed, local only) | concept in [`trading-scalping-recorder.md`](trading-scalping-recorder.md); **needs approval** |
+| P3 | Optional order-book / liquidation recorder (public WebSocket, time-boxed, local only) | built and offline-tested ([`trading-scalping-recorder.md`](trading-scalping-recorder.md)); a live session **needs approval** |
 | P3 | One untouched test per surviving candidate; then, if justified, a pre-registered scalping paper spec | owner decision |
 | P4 | SOL, XRP, BNB, LINK, HYPE after a data check | later |
 
