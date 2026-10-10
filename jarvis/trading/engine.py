@@ -532,11 +532,15 @@ def run_backtest(
     journal: Journal | None = None,
     leverage: Mapping[str, LeverageGrant] | None = None,
     funding_rates: Mapping[int, float] | None = None,
+    entry_guard: Callable[[str, str, str, float, int], list[str]] | None = None,
+    on_open: Callable[[str, Any], None] | None = None,
+    on_trade: Callable[[Trade], None] | None = None,
 ) -> BacktestResult:
     """Replay *series*; trade only in ``[start, end)``. Bars before ``start``
     serve as indicator history (warm-up), never as tradable bars. Several
     strategies share one account; ``metrics["by_strategy"]`` keeps each one's
-    trades apart."""
+    trades apart. ``entry_guard`` / ``on_open`` / ``on_trade`` connect a
+    portfolio controller (see ``DemoTrader``); none by default."""
     quality = require_usable(series)
     end = len(series) if end is None else min(end, len(series))
     if not 0 <= start < end:
@@ -555,6 +559,9 @@ def run_backtest(
         journal,
         leverage=dict(leverage or {}),
         funding_rates=dict(funding_rates) if funding_rates else None,
+        entry_guard=entry_guard,
+        on_open=on_open,
+        on_trade=on_trade,
     )
     curve: list[float] = []
     for i in range(start, end):

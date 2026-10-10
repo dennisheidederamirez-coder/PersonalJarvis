@@ -231,3 +231,35 @@ def test_costs_count_into_the_stop_so_the_cap_holds() -> None:
         Account(10_000, (), {"BTC-USD": 30_000.0}),
     )
     assert not plain.approved  # the swing profile's 0.2 % minimum stop still applies there
+
+
+def test_exposure_follows_realised_capital() -> None:
+    c = PortfolioController(10_000)
+    c.on_open("s", "BTC-USD", "long", 10_000, T0)
+    c.on_close("s", "BTC-USD", 50.0, T0)
+    assert c.check_entry("s", "BTC-USD", "long", 10_040, T0) == []  # 1x of 10,050
+    c.on_open("s", "BTC-USD", "long", 10_000, T0)
+    c.on_close("s", "BTC-USD", -100.0, T0)
+    assert "exposure" in " ".join(c.check_entry("s", "BTC-USD", "long", 10_000, T0))
+
+
+def test_cost_levels_split_exactly_into_fees_spread_and_slippage() -> None:
+    from jarvis.trading.scalping.study import cost_model
+
+    for level in (0.0015, 0.0025, 0.0040):
+        cm = cost_model(level)
+        round_trip = 2 * cm.fee_rate + cm.spread_bps / 10_000 + 2 * cm.slippage_bps / 10_000
+        assert round_trip == pytest.approx(level)
+    with pytest.raises(ValueError):
+        cost_model(0.0005)  # below two taker fees
+
+
+def test_a_study_run_reads_only_its_period() -> None:
+    from jarvis.trading.scalping.study import run_config
+
+    s = minutes(6000, seed=9, surge_every=13)
+    a, b = T0 + 2000 * M1, T0 + 4000 * M1
+    m = run_config(s, "scalp_breakout", a, b, 0.0015, bootstrap=200)
+    assert m["bars"] == 2000 and 0 <= m["p_value"] <= 1
+    cut = run_config(s.slice(0, 4000), "scalp_breakout", a, b, 0.0015, bootstrap=200)
+    assert cut["trades"] == m["trades"] and cut["net_pnl"] == pytest.approx(m["net_pnl"])

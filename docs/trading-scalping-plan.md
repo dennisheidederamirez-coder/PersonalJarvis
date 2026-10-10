@@ -42,9 +42,9 @@ not import this branch. Background: [`trading-scalping.md`](trading-scalping.md)
 
 | Data | Source (public, no key) | Limits / notes | Fit |
 |---|---|---|---|
-| 1m klines incl. taker buy volume | Binance USD-M `/fapi/v1/klines` | 1,500 bars per request. 3m and 5m are resampled from 1m. | **History; primary** |
+| 1m klines incl. taker buy volume | Binance USD-M `/fapi/v1/klines` | 1,000 bars per request = weight 5 (1,500 = weight 10; measured). IP limit 2,400 weight/min. History from 2019-09 (BTC) / 2019-11 (ETH). 3m and 5m are resampled from 1m. | **History; primary** |
 | 1m klines | OKX `/api/v5/market/history-candles` | 100 per request. No taker split. | Cross-check |
-| Aggregated trades (aggressor side) | Binance `aggTrades` | 1,000 per request; a time window must be under 1 hour. BTC perp is millions per day. | Short samples only |
+| Aggregated trades (aggressor side) | Binance `aggTrades` | 1,000 per request, weight 20 (measured). A time window must be under 1 hour, and time queries reach back **only two days** (error -4166). | Recent short samples only |
 | Trades | OKX `history-trades` | 100 per request, paginated backwards, a few months of history | Short samples |
 | `historicalTrades` | Binance | Needs an API key | **Excluded** |
 | Order book (L2 snapshot) | Binance `depth`, OKX `books` (REST) | A snapshot only; no history is available for free | Recording only |
@@ -95,11 +95,11 @@ No fill at an ideal bar price.
 | Priority | Step | State |
 |---|---|---|
 | P0 | Foundations: tape, simulator, levels, three candidates, controller, profiles, splits (offline, synthetic tests) | **done** |
-| P1 | Download BTC and ETH 1m klines with taker volume from Binance USD-M, with OKX as the cross-check | **needs approval** |
-| P1 | Kline cost model calibrated against short trade samples (`aggTrades`, a few hours) | after P1 data |
+| P1 | Download BTC and ETH 1m klines with taker volume from Binance USD-M (OKX cross-check not yet approved) | **approved, done**. See [`trading-scalping-phase1.md`](trading-scalping-phase1.md). |
+| P1 | Kline cost model calibrated against short trade samples (`aggTrades`, a few hours) | **approved, done**; to be repeated |
 | P2 | Backtest runner: candidates × BTC/ETH × 1m/3m/5m on train/validation, with frozen grids | after P1 |
 | P2 | Fill-model check: kline simulation vs tape simulation on the sample windows | after P1 |
-| P3 | Optional order-book / liquidation recorder (public WebSocket, time-boxed, local only) | **needs approval** (standing connection) |
+| P3 | Optional order-book / liquidation recorder (public WebSocket, time-boxed, local only) | concept in [`trading-scalping-recorder.md`](trading-scalping-recorder.md); **needs approval** |
 | P3 | One untouched test per surviving candidate; then, if justified, a pre-registered scalping paper spec | owner decision |
 | P4 | SOL, XRP, BNB, LINK, HYPE after a data check | later |
 
@@ -107,7 +107,7 @@ No fill at an ideal bar price.
 
 | Item | Estimate |
 |---|---|
-| Binance 1m bars, 2 years, BTC + ETH | ≈ 2 × 1.05 M bars ≈ **1,400 requests**, ≈ 160 MB |
+| Binance 1m bars, 2 years, BTC + ETH | ≈ 2 × 1.05 M bars ≈ **2,176 requests** at 1,000 per page (lower total weight than 1,500 per page), ≈ 315 MB. The earlier figure of 160 MB was wrong. |
 | OKX 1m cross-check, 90 days | ≈ 2 × 1,300 requests ≈ 2,600 requests, ≈ 20 MB |
 | `aggTrades` samples (24 × 1 h windows per symbol) | several thousand requests; to be sized precisely before the fetch |
 

@@ -101,6 +101,7 @@ class PortfolioController:
         self._roll(now_ms)
         self.open.pop((strategy, symbol), None)
         self.realised_today += net
+        self.total_capital += net  # exposure is measured against realised capital
         if net < 0:
             self.streak[strategy] += 1
             if self.streak[strategy] >= self.limits.loss_streak:
