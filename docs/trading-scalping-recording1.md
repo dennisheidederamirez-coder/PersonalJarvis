@@ -21,7 +21,7 @@ offline-tested. A new session needs a new owner approval.
 
 | | BTCUSDT | ETHUSDT |
 |---|---|---|
-| Snapshots / expected (2 per s) | 7,140 / 7,195 (99.2 %) | 7,140 / 7,197 (99.2 %) |
+| Snapshots / expected (2 per s) | 7,140 / 7,197 (99.2 %) | 7,140 / 7,198 (99.2 %) |
 | Gaps over 1 s | 0 (max 528 ms) | 0 (max 600 ms) |
 | Price move in the hour | 0.11 % range (very quiet Saturday morning) | 0.16 % range |
 
