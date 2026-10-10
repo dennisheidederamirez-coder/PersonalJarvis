@@ -4,9 +4,14 @@ Status (2026-10-10): `jarvis/market_data/recorder.py` is **built and tested
 offline** with fake streams. It has **never connected.** Each session needs the
 owner's explicit approval, and the CLI refuses without `--owner-approved`.
 
+**Endpoint split (found in recording 1):** since 2026-04-23 the legacy
+combined-stream URL delivers only `/public` data. Book data now comes from
+`/public/stream`, and trades and liquidations from `/market/stream`, on two
+connections (fixed in code; see [`trading-scalping-recording1.md`](trading-scalping-recording1.md)).
+
 **As built:** Binance USD-M only. It records `<sym>@depth20@500ms` (top-20
 partial-book snapshots: no diff sync, so no sync state can drift), `@aggTrade`
-and `@forceOrder` for BTCUSDT and ETHUSDT on ONE combined-stream connection.
+and `@forceOrder` for BTCUSDT and ETHUSDT.
 The diff-stream and OKX designs below are kept as later options.
 
 **Checked (2026-10):**
