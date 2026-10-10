@@ -1,12 +1,17 @@
 """One-off, time-boxed recorder for PUBLIC Binance USD-M market streams.
 
-Records, for the given symbols:
+Records, for the given symbols, over TWO connections. Since the 2026-03
+endpoint split, the legacy URL delivers only the ``/public`` category:
 
-- ``<sym>@depth20@500ms``: top 20 book levels, a full partial-book snapshot
-  per message, so no diff-sync state can drift;
-- ``<sym>@aggTrade``: trades with the aggressor side;
-- ``<sym>@forceOrder``: liquidations. Binance pushes only the latest one per
-  symbol per second, so this is a lower bound, stored with that coverage note.
+- ``/public``: ``<sym>@depth20@500ms``, the top 20 book levels as a full
+  partial-book snapshot per message, so no diff-sync state can drift;
+- ``/market``: ``<sym>@aggTrade``, trades with the aggressor side;
+- ``/market``: ``<sym>@forceOrder``, liquidations. Binance pushes only the
+  latest one per symbol per second, so this is a lower bound, stored with
+  that coverage note.
+
+If one connection is lost for good, the whole session ends: an incomplete
+recording is worse than a short one.
 
 Everything recorded is OBSERVED market data and is stored as such. Modelled
 liquidity or liquidation zones are never written here.
@@ -53,7 +58,13 @@ log = logging.getLogger(__name__)
 
 MAX_DURATION_S: Final = 3600.0
 GRACE_S: Final = 30.0
-WS_BASE: Final = "wss://fstream.binance.com/stream?streams="
+WS_HOST: Final = "wss://fstream.binance.com"
+#: stream category -> endpoint (Binance USD-M WebSocket split, 2026-03)
+ENDPOINTS: Final = {
+    "public": f"{WS_HOST}/public/stream?streams=",
+    "market": f"{WS_HOST}/market/stream?streams=",
+}
+_KINDS: Final = {"public": ("depth20@500ms",), "market": ("aggTrade", "forceOrder")}
 LIQUIDATION_COVERAGE: Final = "binance forceOrder: latest liquidation per symbol per 1000 ms only"
 _SYMBOL = re.compile(r"^[A-Z0-9]{2,20}$")
 
@@ -82,15 +93,12 @@ class RecorderConfig:
         if not self.symbols or not all(_SYMBOL.match(s) for s in self.symbols):
             raise ValueError("symbols must be upper-case exchange symbols")
 
-    def streams(self) -> list[str]:
-        return [
-            f"{s.lower()}@{kind}"
-            for s in self.symbols
-            for kind in ("depth20@500ms", "aggTrade", "forceOrder")
-        ]
+    def streams(self, category: str | None = None) -> list[str]:
+        cats = [category] if category else list(_KINDS)
+        return [f"{s.lower()}@{kind}" for c in cats for s in self.symbols for kind in _KINDS[c]]
 
-    def url(self) -> str:
-        return WS_BASE + "/".join(self.streams())
+    def urls(self) -> dict[str, str]:
+        return {c: ENDPOINTS[c] + "/".join(self.streams(c)) for c in _KINDS}
 
 
 @dataclass
@@ -254,67 +262,86 @@ async def record(
     store.begin(cfg, wall_ms())
     last_book: dict[str, int] = {}
     lat: list[int] = []
-    attempt = 0
 
     def remaining() -> float:
         return deadline - clock()
 
-    try:
-        async with asyncio.timeout(cfg.duration_s + GRACE_S):
-            while not s.stop_reason:
+    async def run_one(category: str, url: str) -> None:
+        attempt = 0
+        while not s.stop_reason:
+            if remaining() <= 0:
+                s.stop_reason = "duration reached"
+                return
+            try:
+                async with contextlib.AsyncExitStack() as stack:
+                    ws = await asyncio.wait_for(
+                        stack.enter_async_context(connect(url)),
+                        timeout=max(0.01, min(cfg.open_timeout_s, remaining())),
+                    )
+                    store.add("rec_events", (wall_ms(), "connected", category))
+                    while not s.stop_reason:
+                        left = remaining()
+                        if left <= 0:
+                            s.stop_reason = "duration reached"
+                            return
+                        if cfg.stop_file is not None and cfg.stop_file.exists():
+                            s.stop_reason = "stop file"
+                            return
+                        if s.bytes > cfg.max_bytes or (
+                            s.messages % 1000 == 0 and store.size() > cfg.max_bytes
+                        ):
+                            s.stop_reason = "storage cap"
+                            return
+                        raw = await asyncio.wait_for(
+                            ws.recv(), timeout=min(cfg.idle_timeout_s, left)
+                        )
+                        s.messages += 1
+                        s.bytes += len(raw)
+                        _handle(raw, store, s, wall_ms(), last_book, lat)
+                        if store.pending() >= cfg.flush_every:
+                            store.flush()
+                        # a buffered socket can return without suspending;
+                        # yield so the other connection is never starved
+                        await asyncio.sleep(0)
+                    return
+            except TimeoutError:
                 if remaining() <= 0:
                     s.stop_reason = "duration reached"
-                    break
-                try:
-                    async with contextlib.AsyncExitStack() as stack:
-                        ws = await asyncio.wait_for(
-                            stack.enter_async_context(connect(cfg.url())),
-                            timeout=max(0.01, min(cfg.open_timeout_s, remaining())),
-                        )
-                        store.add("rec_events", (wall_ms(), "connected", ""))
-                        while True:
-                            left = remaining()
-                            if left <= 0:
-                                s.stop_reason = "duration reached"
-                                break
-                            if cfg.stop_file is not None and cfg.stop_file.exists():
-                                s.stop_reason = "stop file"
-                                break
-                            if s.bytes > cfg.max_bytes or (
-                                s.messages % 1000 == 0 and store.size() > cfg.max_bytes
-                            ):
-                                s.stop_reason = "storage cap"
-                                break
-                            raw = await asyncio.wait_for(
-                                ws.recv(), timeout=min(cfg.idle_timeout_s, left)
-                            )
-                            s.messages += 1
-                            s.bytes += len(raw)
-                            _handle(raw, store, s, wall_ms(), last_book, lat)
-                            if store.pending() >= cfg.flush_every:
-                                store.flush()
-                except TimeoutError:
-                    if remaining() <= 0:
-                        s.stop_reason = "duration reached"
-                        break
-                    store.add("rec_events", (wall_ms(), "idle_or_open_timeout", ""))
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:  # noqa: BLE001 — any socket error ends this connection; reconnect below
-                    s.errors[type(exc).__name__] = s.errors.get(type(exc).__name__, 0) + 1
-                    store.add("rec_events", (wall_ms(), "disconnect", type(exc).__name__))
-                if s.stop_reason:
-                    break
-                attempt += 1
-                s.reconnects = attempt
-                if attempt > cfg.max_reconnects:
-                    s.stop_reason = "too many reconnects"
-                    break
-                backoff = min(30.0, 2.0**attempt) * rng.uniform(0.5, 1.5)
-                await sleep(max(0.0, min(backoff, remaining())))
+                    return
+                store.add("rec_events", (wall_ms(), "idle_or_open_timeout", category))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — any socket error ends this connection; reconnect below
+                name = type(exc).__name__
+                s.errors[name] = s.errors.get(name, 0) + 1
+                store.add("rec_events", (wall_ms(), "disconnect", f"{category}: {name}"))
+            attempt += 1
+            s.reconnects += 1
+            if attempt > cfg.max_reconnects:
+                s.stop_reason = f"too many reconnects ({category})"
+                return
+            backoff = min(30.0, 2.0**attempt) * rng.uniform(0.5, 1.5)
+            await sleep(max(0.0, min(backoff, remaining())))
+
+    tasks: list[asyncio.Task[None]] = []
+    try:
+        async with asyncio.timeout(cfg.duration_s + GRACE_S):
+            tasks = [asyncio.create_task(run_one(c, u)) for c, u in cfg.urls().items()]
+            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            # the first connection to finish ends the session for all of them
+            s.stop_reason = s.stop_reason or "a connection ended"
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for t in done:
+                exc = None if t.cancelled() else t.exception()
+                if exc is not None:
+                    raise exc
     except TimeoutError:
         s.stop_reason = s.stop_reason or "outer timeout"
     finally:
+        for t in tasks:
+            t.cancel()
         s.latency_ms_median = float(sorted(lat)[len(lat) // 2]) if lat else None
         s.stop_reason = s.stop_reason or "cancelled"
         store.end(wall_ms(), s)
@@ -333,7 +360,7 @@ def install_hard_stop(seconds: float, exit_code: int = 3) -> threading.Timer:
 @contextlib.asynccontextmanager
 async def websocket_connect(url: str) -> AsyncIterator[Conn]:
     """Public market-stream connection (no headers, no key)."""
-    if not url.startswith(WS_BASE):
+    if not any(url.startswith(base) for base in ENDPOINTS.values()):
         raise ValueError("only Binance USD-M public market streams are allowed")
     from websockets.asyncio.client import connect  # lazy: optional at import time
 
@@ -359,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         stop_file=Path(args.stop_file) if args.stop_file else None,
     )
     plan = {
-        "url": cfg.url(),
+        "urls": cfg.urls(),
         "duration_s": cfg.duration_s,
         "max_bytes": cfg.max_bytes,
         "max_reconnects": cfg.max_reconnects,
@@ -385,6 +412,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "ENDPOINTS",
     "MAX_DURATION_S",
     "RecordStore",
     "RecorderConfig",

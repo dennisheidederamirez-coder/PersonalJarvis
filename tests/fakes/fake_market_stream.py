@@ -93,13 +93,29 @@ class ScriptedConn:
 
 
 class Connector:
-    def __init__(self, conns: list[ScriptedConn | Exception | None]) -> None:
-        self.conns, self.urls = conns, []  # None = an open that never completes
+    """Hands out connections per endpoint. ``public`` and ``market`` are
+    lists used in order for that endpoint's successive connects; a single
+    list given positionally serves both. ``None`` = an open that never
+    completes, an Exception = a failed connect."""
+
+    def __init__(
+        self,
+        conns: list[ScriptedConn | Exception | None] | None = None,
+        *,
+        public: list[ScriptedConn | Exception | None] | None = None,
+        market: list[ScriptedConn | Exception | None] | None = None,
+    ) -> None:
+        self.lists = {"public": public or conns or [], "market": market or conns or []}
+        self.urls: list[str] = []
+        self.calls = {"public": 0, "market": 0}
 
     @contextlib.asynccontextmanager
     async def __call__(self, url: str) -> AsyncIterator[ScriptedConn]:
         self.urls.append(url)
-        item = self.conns[min(len(self.urls) - 1, len(self.conns) - 1)]
+        cat = "market" if "/market/" in url else "public"
+        items = self.lists[cat]
+        item = items[min(self.calls[cat], len(items) - 1)]
+        self.calls[cat] += 1
         if item is None:
             await asyncio.Event().wait()
         if isinstance(item, Exception):

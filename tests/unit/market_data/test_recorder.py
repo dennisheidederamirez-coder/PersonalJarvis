@@ -42,6 +42,15 @@ def mixed(n: int) -> str:
     ][n % 4]
 
 
+def book_msg(n: int) -> str:
+    return depth("BTCUSDT" if n % 2 else "ETHUSDT", T0 + n * 250)
+
+
+def market_msg(n: int) -> str:
+    ts = T0 + n * 100
+    return liquidation("ETHUSDT", ts) if n % 10 == 0 else agg("BTCUSDT", ts, n)
+
+
 async def no_sleep(_s: float) -> None:
     return None
 
@@ -52,21 +61,47 @@ async def test_an_endless_stream_stops_at_the_deadline(tmp_path: Path) -> None:
     def tick() -> None:
         clock.t += 0.5
 
-    conn = Connector([ScriptedConn(mixed, on_recv=tick)])
+    conn = Connector(
+        public=[ScriptedConn(book_msg, on_recv=tick)],
+        market=[ScriptedConn(market_msg, on_recv=tick)],
+    )
     store = RecordStore(tmp_path / "r.sqlite")
     s = await record(
         RecorderConfig(duration_s=60), store, conn, clock=clock, wall_ms=lambda: T0, sleep=no_sleep
     )
     store.close()
-    assert s.stop_reason == "duration reached" and s.messages == 120 and clock.t <= 60.5
+    assert s.stop_reason == "duration reached" and clock.t <= 61.0
     db = sqlite3.connect(tmp_path / "r.sqlite")
-    assert db.execute("SELECT COUNT(*) FROM rec_book").fetchone()[0] == 60
-    assert db.execute("SELECT COUNT(*) FROM rec_trades").fetchone()[0] == 30
+    books = db.execute("SELECT COUNT(*) FROM rec_book").fetchone()[0]
+    trades = db.execute("SELECT COUNT(*) FROM rec_trades").fetchone()[0]
+    liqs = db.execute("SELECT COUNT(*) FROM rec_liquidations").fetchone()[0]
+    assert books > 0 and trades > 0 and liqs > 0 and books + trades + liqs == s.messages
     assert db.execute("SELECT DISTINCT provenance, coverage FROM rec_liquidations").fetchall() == [
         ("observed", rec_mod.LIQUIDATION_COVERAGE)
     ]
     assert db.execute("SELECT stop_reason FROM rec_sessions").fetchone()[0] == "duration reached"
-    assert "depth20@500ms" in conn.urls[0] and "@forceOrder" in conn.urls[0]
+    events = {r[0] for r in db.execute("SELECT detail FROM rec_events WHERE kind = 'connected'")}
+    assert events == {"public", "market"}
+
+
+def test_streams_go_to_their_endpoints() -> None:
+    urls = RecorderConfig().urls()
+    assert urls["public"].startswith("wss://fstream.binance.com/public/stream?streams=")
+    assert urls["market"].startswith("wss://fstream.binance.com/market/stream?streams=")
+    assert "depth20@500ms" in urls["public"] and "aggTrade" not in urls["public"]
+    assert "btcusdt@aggTrade" in urls["market"] and "ethusdt@forceOrder" in urls["market"]
+    assert "depth" not in urls["market"]
+
+
+async def test_losing_one_connection_for_good_ends_the_whole_session(tmp_path: Path) -> None:
+    conn = Connector(public=[ScriptedConn(book_msg)], market=[ConnectionError("down")])
+    s = await record(
+        RecorderConfig(duration_s=600, max_reconnects=2),
+        RecordStore(tmp_path / "r.sqlite"),
+        conn,
+        sleep=no_sleep,
+    )
+    assert s.stop_reason == "too many reconnects (market)" and conn.calls["market"] == 3
 
 
 async def test_a_silent_socket_cannot_outlive_the_deadline(tmp_path: Path) -> None:
@@ -94,14 +129,15 @@ async def test_reconnects_are_jittered_and_limited(tmp_path: Path) -> None:
     async def sleep(x: float) -> None:
         slept.append(x)
 
-    conn = Connector([ConnectionError("down")])
+    conn = Connector(public=[None], market=[ConnectionError("down")])
     s = await record(
         RecorderConfig(duration_s=600, max_reconnects=3),
         RecordStore(tmp_path / "r.sqlite"),
         conn,
         sleep=sleep,
     )
-    assert s.stop_reason == "too many reconnects" and len(conn.urls) == 4 and len(slept) == 3
+    assert s.stop_reason == "too many reconnects (market)" and conn.calls["market"] == 4
+    assert len(slept) == 3
     assert all(0.5 * 2**k <= x <= 1.5 * 2**k for k, x in enumerate(slept, start=1))
 
 
@@ -156,13 +192,18 @@ def test_limits_are_enforced_by_the_config() -> None:
         RecorderConfig(duration_s=MAX_DURATION_S + 1)
     with pytest.raises(ValueError):
         RecorderConfig(symbols=("btcusdt; drop",))
-    assert RecorderConfig().url().startswith("wss://fstream.binance.com/stream?streams=")
+    assert set(RecorderConfig().urls()) == {"public", "market"}
 
 
 async def test_only_public_market_streams_can_be_opened() -> None:
-    with pytest.raises(ValueError):
-        async with websocket_connect("wss://fstream.binance.com/ws/listenKey"):
-            pass
+    for bad in (
+        "wss://fstream.binance.com/ws/listenKey",
+        "wss://fstream.binance.com/private/stream?streams=x",
+        "wss://fstream.binance.com/stream?streams=btcusdt@aggTrade",
+    ):
+        with pytest.raises(ValueError):
+            async with websocket_connect(bad):
+                pass
 
 
 def test_no_keys_and_no_order_endpoints_in_the_recorder() -> None:

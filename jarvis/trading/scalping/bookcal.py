@@ -209,4 +209,99 @@ def maker_fill_experiment(
     }
 
 
-__all__ = ["Book", "book_stats", "load_recording", "maker_fill_experiment", "market_order_cost"]
+def maker_fill_bounds(
+    books: Sequence[Book], *, every_ms: int = 10_000, ttl_ms: int = 60_000, horizon_ms: int = 60_000
+) -> dict[str, object]:
+    """Bounds on the fill chance of a post-only order at the best bid (ask),
+    from BOOK SNAPSHOTS alone — no trades, no queue model:
+
+    - lower bound: within ``ttl`` the best ask fell to or below our bid. A
+      resting order at that price MUST have traded, or the book would have
+      been crossed;
+    - upper bound: within ``ttl`` the best bid fell below our price. Our
+      level was emptied, by trades (a fill is possible) or by cancellations
+      (no fill). Anything less, and the order surely did not fill.
+
+    Snapshots every 500 ms can miss brief moves, so the lower bound is
+    conservative. ``adverse``: the mid move over ``horizon`` after the
+    sure-fill moment, in the order's direction, against the move after any
+    placement."""
+    if len(books) < 2:
+        return {"provenance": "observed book, bounds only", "orders": 0}
+    ts = np.asarray([b.ts for b in books], dtype=np.int64)
+    bid = np.asarray([b.bids[0][0] for b in books])
+    ask = np.asarray([b.asks[0][0] for b in books])
+    mid = (bid + ask) / 2
+    sure, maybe, n = 0, 0, 0
+    adv_sure: list[float] = []
+    adv_all: list[float] = []
+
+    def mid_at(t: int) -> float:
+        return float(mid[max(0, int(np.searchsorted(ts, t, side="right")) - 1)])
+
+    next_t = int(ts[0])
+    for k in range(len(books)):
+        if ts[k] < next_t or ts[k] + ttl_ms + horizon_ms > ts[-1]:
+            continue
+        next_t = int(ts[k]) + every_ms
+        hi = int(np.searchsorted(ts, ts[k] + ttl_ms, side="right"))
+        for sign, price in ((1, bid[k]), (-1, ask[k])):
+            n += 1
+            adv_all.append(sign * (mid_at(int(ts[k]) + horizon_ms) / mid[k] - 1) * 10_000)
+            window = slice(k + 1, hi)
+            crossed = (ask[window] <= price) if sign > 0 else (bid[window] >= price)
+            emptied = (bid[window] < price) if sign > 0 else (ask[window] > price)
+            if crossed.any():
+                sure += 1
+                t_fill = int(ts[k + 1 + int(np.argmax(crossed))])
+                adv_sure.append(sign * (mid_at(t_fill + horizon_ms) / mid_at(t_fill) - 1) * 10_000)
+            if crossed.any() or emptied.any():
+                maybe += 1
+    return {
+        "provenance": "observed book, bounds only (no fill observed)",
+        "orders": n,
+        "fill_rate_lower_bound": sure / n if n else 0.0,
+        "fill_rate_upper_bound": maybe / n if n else 0.0,
+        "adverse_bps_after_sure_fill_mean": float(np.mean(adv_sure)) if adv_sure else None,
+        "move_bps_after_any_placement_mean": float(np.mean(adv_all)) if adv_all else None,
+        "ttl_s": ttl_ms / 1000,
+        "horizon_s": horizon_ms / 1000,
+    }
+
+
+def liquidity_over_time(
+    books: Sequence[Book], bucket_ms: int = 300_000, band_bps: float = 5.0
+) -> list[dict[str, float]]:
+    """Observed: per time bucket, median spread and resting notional within
+    ``band_bps`` of the mid on each side."""
+    out: dict[int, list[Book]] = {}
+    for b in books:
+        out.setdefault(b.ts // bucket_ms * bucket_ms, []).append(b)
+    rows = []
+    for start, bs in sorted(out.items()):
+        st = book_stats(bs, (band_bps,))
+        depth = st["depth_notional_median"]
+        assert isinstance(depth, dict)
+        spread = st["spread_bps"]
+        assert isinstance(spread, dict)
+        rows.append(
+            {
+                "start_ms": float(start),
+                "snapshots": float(len(bs)),
+                "spread_bps_median": float(spread["median"] or 0.0),
+                f"bid_{band_bps:g}bp": float(depth[f"bid_{band_bps:g}bp"] or 0.0),
+                f"ask_{band_bps:g}bp": float(depth[f"ask_{band_bps:g}bp"] or 0.0),
+            }
+        )
+    return rows
+
+
+__all__ = [
+    "Book",
+    "book_stats",
+    "liquidity_over_time",
+    "load_recording",
+    "maker_fill_bounds",
+    "maker_fill_experiment",
+    "market_order_cost",
+]

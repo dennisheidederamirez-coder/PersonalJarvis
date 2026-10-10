@@ -77,11 +77,32 @@ async def test_end_to_end_from_a_recording(tmp_path: Path) -> None:
     await record(
         RecorderConfig(duration_s=50),
         store,
-        Connector([ScriptedConn(msg, tick)]),
+        Connector(
+            public=[ScriptedConn(lambda n: depth("BTCUSDT", T0 + n * 200), tick)],
+            market=[ScriptedConn(lambda n: agg("BTCUSDT", T0 + n * 200 + 100, n), tick)],
+        ),
         clock=lambda: t["now"],
         sleep=no_sleep,
     )
     store.close()
     books, tape = load_recording(tmp_path / "r.sqlite", "BTCUSDT")
-    assert len(books) == 25 and len(tape) == 25 and np.all(np.diff(tape.ts) >= 0)
+    assert len(books) == len(tape) == 25 and np.all(np.diff(tape.ts) >= 0)
     assert book_stats(books)["spread_bps"]["median"] == pytest.approx(10.0, rel=0.01)
+
+
+def test_fill_bounds_from_the_book_alone() -> None:
+    from jarvis.trading.scalping.bookcal import liquidity_over_time, maker_fill_bounds
+
+    # price falls 0.1 every second: a resting bid is first emptied, then crossed
+    falling = [book(T0 + k * 500, mid=100.0 - 0.05 * k) for k in range(600)]
+    r = maker_fill_bounds(falling, every_ms=10_000, ttl_ms=10_000, horizon_ms=5_000)
+    assert r["provenance"].startswith("observed book, bounds only")
+    assert r["fill_rate_lower_bound"] == pytest.approx(0.5)  # every bid gets crossed, no ask does
+    assert r["fill_rate_upper_bound"] == pytest.approx(0.5)
+    assert r["adverse_bps_after_sure_fill_mean"] < 0  # bids filled into a falling market
+    flat = [book(T0 + k * 500) for k in range(600)]
+    f = maker_fill_bounds(flat, every_ms=10_000, ttl_ms=10_000, horizon_ms=5_000)
+    assert f["fill_rate_lower_bound"] == 0 and f["fill_rate_upper_bound"] == 0
+    rows = liquidity_over_time(flat, bucket_ms=60_000)
+    assert sum(r["snapshots"] for r in rows) == 600  # T0 is not minute-aligned: 6 buckets
+    assert len(rows) == 6 and all(r["spread_bps_median"] > 0 for r in rows)
