@@ -102,7 +102,12 @@ def test_a_code_change_stops_the_test(tmp_path: Path) -> None:
 
 
 def test_the_launch_agent_is_generated_for_review_not_installed(tmp_path: Path) -> None:
+    # generating the plist must not install anything; an agent the owner
+    # installed on purpose may already exist, so compare before and after
+    agents = Path.home() / "Library" / "LaunchAgents"
+    before = {p: p.stat().st_mtime_ns for p in agents.glob("local.jarvis.paper-test*.plist")}
     plist = launchd_plist("/usr/bin/python3", str(tmp_path), "s.sqlite", "j.sqlite", "r", "log")
     assert plist.count("<key>Hour</key>") == 6 and "<false/>" in plist  # no run at load
     assert "jarvis.market_data.paper_job" in plist and "run" in plist
-    assert not list(Path.home().glob("Library/LaunchAgents/local.jarvis.paper-test*.plist"))
+    after = {p: p.stat().st_mtime_ns for p in agents.glob("local.jarvis.paper-test*.plist")}
+    assert after == before

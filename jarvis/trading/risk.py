@@ -46,6 +46,10 @@ class RiskLimits:
     min_stop_distance: float = 0.002
     max_stop_distance: float = 0.20
     min_notional: float = 10.0
+    #: expected round-trip cost (fees + spread + slippage) as a share of the
+    #: price. It is added to the stop distance when sizing, so the loss at the
+    #: stop INCLUDING costs stays within ``risk_per_trade``. 0 = not modelled.
+    round_trip_cost: float = 0.0
     max_margin_usage: float = 0.5  # sum of isolated margins / equity
     liquidation_buffer: float = 0.5  # the stop uses at most half the way to liquidation
     max_correlated_risk: float = 0.01  # same-direction risk of correlated positions
@@ -207,7 +211,9 @@ class RiskManager:
         distance = abs(entry - stop)
         if equity <= 0 or distance <= 0 or not math.isfinite(distance):
             return 0.0
-        by_risk = equity * self.limits.risk_per_trade / distance
+        by_risk = (
+            equity * self.limits.risk_per_trade / (distance + entry * self.limits.round_trip_cost)
+        )
         by_exposure = equity * self.limits.max_gross_exposure / entry
         return instrument.round_qty(min(by_risk, by_exposure))
 
@@ -259,7 +265,7 @@ class RiskManager:
 
         qty = self.size(account.equity, price, stop, req.instrument)
         notional = qty * price
-        risk_amount = qty * abs(price - stop)
+        risk_amount = qty * (abs(price - stop) + price * lim.round_trip_cost)
         open_risk = sum(p.risk for p in account.positions)
         gross = sum(p.notional for p in account.positions)
         if qty <= 0 or notional < lim.min_notional:

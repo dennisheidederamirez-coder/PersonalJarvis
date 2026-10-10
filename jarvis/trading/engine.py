@@ -80,6 +80,11 @@ class DemoTrader:
     #: journal a "no_signal" / "hold" record with the strategy's reason for
     #: every bar it does not act on (paper runs; backtests leave it off)
     explain_no_signal: bool = False
+    #: portfolio-level veto before an approved entry is queued (e.g. the
+    #: scalping controller): (strategy, symbol, side, notional, ts) -> reasons
+    entry_guard: Callable[[str, str, str, float, int], list[str]] | None = None
+    #: told about every simulated opening fill (strategy, fill)
+    on_open: Callable[[str, Any], None] | None = None
     _pending: dict[str, _Pending] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ api
@@ -335,7 +340,23 @@ class DemoTrader:
                 self.leverage.get(strategy.name, LeverageGrant()),
             )
             verdict = self.risk.check_entry(req, self.account(excluding=sym))
-            if verdict.approved:
+            guard = (
+                self.entry_guard(strategy.name, sym, side.value, verdict.qty * close, ts)
+                if verdict.approved and self.entry_guard is not None
+                else []
+            )
+            if guard:
+                self.journal.record(
+                    "rejected",
+                    ts,
+                    sym,
+                    {
+                        "client_id": req.client_id,
+                        "side": side.value,
+                        "reasons": [f"portfolio: {r}" for r in guard],
+                    },
+                )
+            elif verdict.approved:
                 pending.entry, pending.qty = req, verdict.qty
                 pending.planned_risk, pending.reason = verdict.risk_amount, target.reason
                 pending.strategy = strategy.name
@@ -429,6 +450,8 @@ class DemoTrader:
             mmr=req.instrument.mmr,
         )
         self.journal.record("fill", ts, sym, _fill_dict(fill))
+        if self.on_open is not None:
+            self.on_open(pending.strategy, fill)
 
     def _check_exits(self, sym: str, ts: int, o: float, h: float, lo: float) -> None:
         pos = self.broker.positions.get(sym)
