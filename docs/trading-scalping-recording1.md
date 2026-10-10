@@ -94,3 +94,16 @@ Hidden and iceberg orders, and cancellations ahead in the queue, stay unknown.
 
 Files: `~/pj-trading-data/scalp/recording_1.sqlite`, `recording_1_report.json`,
 `recording_1.log`.
+
+## Connection test with the fixed recorder (2026-10-10 09:07 UTC, 30 s)
+
+Owner-approved short test; the stream URLs were `/public/stream` (depth20) and
+`/market/stream` (aggTrade, forceOrder).
+
+| | |
+|---|---|
+| Result | Both connections came up and stopped on time (`duration reached`, exit 0), with no reconnects or errors |
+| Book snapshots | 115 (57 BTC, 58 ETH); max gap 504 ms |
+| Trades | **111 (61 BTC, 50 ETH), with the aggressor side recorded** |
+| Liquidations | 0 (none in a quiet half minute; the stream is subscribed) |
+| Size | 0.15 MB (`connection_test_1.sqlite`) |
