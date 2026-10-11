@@ -103,7 +103,7 @@ def inspect_export(path: Path, opts: ImportOptions, *, now_ms: Callable[[], int]
     probe = ImportReport(opts.kind, True, RunStatus.RUNNING, file_sha256="")
     try:
         text = _read_text(path, probe)
-    except ImportRefused as exc:
+    except ImportRefused as exc:  # the refusal code is the report's answer
         out["refused"] = exc.code.value
         return out
     out["sha256_prefix"] = probe.file_sha256[:12]
@@ -121,7 +121,7 @@ def inspect_export(path: Path, opts: ImportOptions, *, now_ms: Callable[[], int]
     try:
         columns = resolve_columns(headers, opts.kind, opts.mapping)
         out["mapping"] = {f: _header(headers[i]) for f, i in sorted(columns.items())}
-    except ImportRefused as exc:
+    except ImportRefused as exc:  # reported as mapping_refused; no trial import then
         out["mapping_refused"] = {"code": exc.code.value, "field": exc.field}
         columns = {}
     mapped = set(columns.values())
