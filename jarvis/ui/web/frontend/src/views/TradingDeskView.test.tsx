@@ -69,7 +69,7 @@ describe("TradingDeskView", () => {
     expect(await screen.findByText("14-Tage-Paper-Test")).toBeTruthy();
     expect(screen.getByTestId("trading-paper-banner").textContent).toContain("Simulation");
     expect(screen.getByText("Tag 1 von 14")).toBeTruthy();
-    expect(screen.getByText("Läuft")).toBeTruthy();
+    expect(screen.getByText("Läuft")).toBeTruthy(); // i18n-allow: asserts the German default UI text
     expect(screen.getAllByText("Konto A").length).toBeGreaterThan(0);
   });
 
@@ -88,7 +88,7 @@ describe("TradingDeskView", () => {
       fireEvent.mouseDown(screen.getByTestId(`trading-tab-${tab}`));
       fireEvent.click(screen.getByTestId(`trading-tab-${tab}`));
     }
-    await screen.findByText("Noch keine Tagesberichte.", { exact: false });
+    await screen.findByText("Noch keine Tagesberichte.", { exact: false }); // i18n-allow: asserts the German default UI text
     expect(calls.length).toBeGreaterThan(0);
     for (const c of calls) {
       expect(c.method).toBe("GET");
@@ -109,7 +109,7 @@ describe("TradingDeskView", () => {
     stubFetch({ ...RESPONSES, overview: { ...overview, source: missingSource, accounts: [] } });
     renderView(<TradingDeskView />);
     const notice = await screen.findByTestId("trading-source-notice");
-    expect(notice.textContent).toContain("Kein Paper-Journal gefunden");
+    expect(notice.textContent).toContain("Kein Paper-Journal gefunden"); // i18n-allow: asserts the German default UI text
     expect(notice.textContent).toContain("paper_journal.sqlite");
     expect(screen.queryByText("Konto A")).toBeNull();
   });
@@ -121,14 +121,14 @@ describe("TradingDeskView", () => {
     });
     renderView(<TradingDeskView />);
     const list = await screen.findByTestId("trading-warnings");
-    expect(within(list).getByText(/überfällig/)).toBeTruthy();
+    expect(within(list).getByText(/überfällig/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
   });
 
   it("translates reasons and keeps the journal's own text", async () => {
     renderView(<TradingDeskView />);
     await screen.findByText("14-Tage-Paper-Test");
     fireEvent.mouseDown(screen.getByTestId("trading-tab-decisions"));
-    expect((await screen.findAllByText("Limit für offenes Risiko")).length).toBe(2); // chip + row
+    expect((await screen.findAllByText("Limit für offenes Risiko")).length).toBe(2); // chip + row; i18n-allow: asserts the German default UI text
     expect(screen.getByText("total open risk would exceed the limit")).toBeTruthy();
     expect(screen.getByText("Signal: Ausbruch nach oben")).toBeTruthy();
   });
