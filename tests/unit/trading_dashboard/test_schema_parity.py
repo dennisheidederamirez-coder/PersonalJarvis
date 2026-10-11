@@ -113,3 +113,50 @@ def test_every_backend_code_has_a_label_in_both_languages() -> None:
     for lang in ("de", "en"):
         keys = _keys(json.loads((_LOCALES / f"{lang}.json").read_text(encoding="utf-8")))
         assert needed <= keys, (lang, sorted(needed - keys))
+
+
+def test_every_live_code_has_a_label_in_both_languages() -> None:
+    from jarvis.live_history.archive import RunStatus
+    from jarvis.live_history.csv_import import ImportKind, IssueCode
+    from jarvis.live_history.reconcile import Code, PnlBasis, Severity
+    from jarvis.live_history.sync import Stream
+    from jarvis.live_history.venue_rest import ErrorKind
+
+    needed = {f"live.recon.code.{c.value}" for c in Code}
+    needed |= {f"live.recon.severity.{s.value}" for s in Severity}
+    needed |= {f"live.recon.basis_name.{b.value}" for b in PnlBasis} | {
+        "live.recon.basis_name.mixed"
+    }
+    needed |= {f"live.recon.group.{g}" for g in ("internal", "journal", "balance")}
+    needed |= {f"live.issue.{c.value}" for c in IssueCode}
+    needed |= {f"live.sources.import_kind.{k.value}" for k in ImportKind}
+    needed |= {f"live.sources.error.{e.value}" for e in ErrorKind}
+    needed |= {f"live.sources.status.{r.value}" for r in RunStatus}
+    needed |= {f"live.sources.kind.{k}" for k in ("sync", "backfill", "import")}
+    needed |= {f"live.sources.stream.{s.value}" for s in Stream}
+    needed |= {f"live.sources.gap.{r}" for r in ("api", "export")}
+    needed |= {f"live.sources.note.{n}" for n in ("retention_unknown", "beyond_retention")}
+    needed |= {
+        f"live.sources.entity.{e}"
+        for e in ("position", "fill", "order", "balance", "journal_entry")
+    }
+    needed |= {
+        f"live.warning.{w}"
+        for w in (
+            "no_sync_yet",
+            "sync_old",
+            "last_run_failed",
+            "last_run_partial",
+            "coverage_gaps",
+            "import_issues",
+            "records_truncated",
+        )
+    }
+    needed |= {f"live.source.{s}" for s in ("missing", "busy", "invalid", "error")}
+    needed |= {f"live.origin.{o}" for o in ("api", "csv")}
+    needed |= {f"live.role.{r}" for r in ("maker", "taker", "unknown")}
+    needed |= {f"live.fill_side.{s}" for s in ("buy", "sell")}
+    needed |= {f"mode.{m}" for m in ("paper", "live")}
+    for lang in ("de", "en"):
+        keys = _keys(json.loads((_LOCALES / f"{lang}.json").read_text(encoding="utf-8")))
+        assert needed <= keys, (lang, sorted(needed - keys))

@@ -666,6 +666,14 @@ def set_trading_dashboard_journal_path(
     _patch_table(path, "trading_dashboard", "journal_path", journal_path)
 
 
+def set_trading_dashboard_live_archive_path(
+    archive_path: str, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Set ``[trading_dashboard] live_archive_path`` — the LIVE history archive
+    the read-only dashboard reads. Empty restores the default under the data dir."""
+    _patch_table(path, "trading_dashboard", "live_archive_path", archive_path)
+
+
 # Voice-keybind action vocabulary. Shared with the keybinds API
 # (jarvis/ui/web/settings_routes.py) and the TS type KeybindAction in the
 # frontend (jarvis/ui/web/frontend/src/hooks/useHotkey.ts). Keep these layers in

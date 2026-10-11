@@ -1,14 +1,22 @@
 /**
- * React Query hooks for the paper-trading dashboard.
+ * React Query hooks for the trading dashboard: the paper test and the LIVE history.
  *
- * Endpoints: see `jarvis/ui/web/trading_routes.py`. Every one is a plain GET
- * over the paper job's journal — nothing in this section can change state.
+ * Endpoints: see `jarvis/ui/web/trading_routes.py`. Every one is a plain GET —
+ * the paper ones over the paper job's journal, the `live/` ones over the LIVE
+ * archive (a different file, different types, a different query-key branch:
+ * `["trading", "live", …]`). Nothing in this section can change state.
  * The journal changes about six times a day, so a one-minute poll while the
  * section is open is plenty; a closed section polls nothing.
  */
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type {
   TradingDecisionPage,
+  TradingLiveCostsView,
+  TradingLiveOverview,
+  TradingLivePositionsView,
+  TradingLiveReconciliationView,
+  TradingLiveSourcesView,
+  TradingLiveTradesView,
   TradingHealthView,
   TradingOverview,
   TradingPerformanceView,
@@ -36,7 +44,8 @@ function useTradingGet<T>(name: string, enabled = true) {
   });
 }
 
-export const useTradingOverview = () => useTradingGet<TradingOverview>("overview");
+export const useTradingOverview = (enabled = true) =>
+  useTradingGet<TradingOverview>("overview", enabled);
 export const useTradingStrategies = (enabled = true) =>
   useTradingGet<TradingStrategiesView>("strategies", enabled);
 export const useTradingPositions = (enabled = true) =>
@@ -74,3 +83,48 @@ export function useTradingDecisions(q: DecisionQuery, enabled = true) {
     enabled,
   });
 }
+
+// ------------------------------------------------------------------- LIVE
+
+const LIVE = `${BASE}/live`;
+
+function useLiveGet<T>(name: string, params: URLSearchParams | null, enabled: boolean) {
+  const qs = params && params.toString() ? `?${params.toString()}` : "";
+  return useQuery({
+    queryKey: ["trading", "live", name, qs],
+    queryFn: ({ signal }) => getJson<T>(`${LIVE}/${name}${qs}`, signal),
+    // The archive changes only when a person runs a sync or an import.
+    refetchInterval: POLL_MS,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+}
+
+export interface LivePageQuery {
+  symbol: string | null;
+  limit: number;
+}
+
+export function livePageParams(q: LivePageQuery): URLSearchParams {
+  const params = new URLSearchParams({ limit: String(q.limit) });
+  if (q.symbol) params.set("symbol", q.symbol);
+  return params;
+}
+
+export const useLiveOverview = (enabled = true) =>
+  useLiveGet<TradingLiveOverview>("overview", null, enabled);
+export const useLivePositions = (q: LivePageQuery, enabled = true) =>
+  useLiveGet<TradingLivePositionsView>("positions", livePageParams(q), enabled);
+export const useLiveTrades = (q: LivePageQuery, enabled = true) =>
+  useLiveGet<TradingLiveTradesView>("trades", livePageParams(q), enabled);
+export const useLiveCosts = (enabled = true) =>
+  useLiveGet<TradingLiveCostsView>("costs", null, enabled);
+export const useLiveReconciliation = (journal: string | null, enabled = true) =>
+  useLiveGet<TradingLiveReconciliationView>(
+    "reconciliation",
+    journal ? new URLSearchParams({ journal }) : null,
+    enabled,
+  );
+export const useLiveSources = (enabled = true) =>
+  useLiveGet<TradingLiveSourcesView>("sources", null, enabled);

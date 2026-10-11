@@ -51,6 +51,37 @@ keep the open time they filled at. Relative times ("3 hours ago") are measured
 from the moment the server read the journal. The UI uses the local time zone;
 the job schedules in UTC.
 
+## LIVE history (separate view)
+
+A switch in the header (**Paper | LIVE**, Paper by default) swaps the whole
+body. LIVE reads the real account's history from the LIVE archive of
+`jarvis.live_history` (see `docs/trading-live-history.md`):
+
+```
+LIVE archive (SQLite, lh_meta.mode = live) ─► trading_dashboard/live_reader ─► live_views ─► /api/trading/live/* (GET) ─► LiveDesk + 6 tabs
+```
+
+| Tab | Shows |
+|---|---|
+| Account | Balance, net result (realized − fees + funding), last 30 days, number of differences, cumulative net by close day, balance per observation, holdings, last sync and run |
+| Positions | Open and closed positions with entry/exit, realized, fees, funding, net, source (API/CSV) and the reconciliation codes that concern each; market filter, paging |
+| Trades | Every fill with fee, realized P/L, maker/taker and source; market filter, paging |
+| Fees & funding | Totals, funding paid/received, fee share; per month and per market |
+| Reconciliation | Venue-internal (position vs its fills), journal (matched by symbol, side, time, size, price) and balance checks, with venue value, compared value and difference |
+| Data & imports | Archive contents, coverage and gaps per stream (and whether the API or only an export can fill them), every CSV import with its issues by line and field, every run |
+
+Separation from PAPER is structural, not cosmetic: a different file, a
+different reader (which refuses a paper journal, while the paper reader
+refuses the LIVE archive), different wire models (`Live*` ↔ `TradingLive*`),
+different routes, a different query-key branch, its own banner, notices and
+warnings. Only the active mode's queries run. There is no route or button
+that syncs, imports or trades; new LIVE data arrives only through a sync or
+import someone starts on the command line.
+
+Configuration: `[trading_dashboard].live_archive_path` (empty =
+`<data_dir>/trading/live_history.sqlite`), set only through
+`config_writer.set_trading_dashboard_live_archive_path()`.
+
 ## Language
 
 The section opens in **German** and has a German/English switch in its header
@@ -77,6 +108,7 @@ writes it: the dashboard itself changes no configuration.
 - `tests/unit/trading_dashboard/test_schema_parity.py`: Pydantic ↔ TypeScript fields and nullability; every backend code has a German and an English label.
 - `tests/unit/trading_dashboard/test_config.py`: the setter writes only its section; empty means the default path.
 - `tests/unit/ui/web/test_trading_routes.py`: GET only (405 for everything else), configured and default paths, nothing created on read, full path not echoed, paging and validation.
+- `tests/unit/trading_dashboard/test_live_dashboard.py`: the LIVE reader (read-only, unchanged file, refuses writes, missing/paper/foreign files, busy, writers not blocked), the views against a synthetic archive (totals follow the definitions, exactly the planted differences, paging, cost sums, imports and coverage, warnings), backfilled positions do not explain a balance change, the routes (GET only, path not echoed, validation), PAPER and LIVE never mixed, the config setter.
 - `frontend/src/views/TradingDeskView.test.tsx`: German by default, English switch, only GET requests under `/api/trading`, no action buttons, missing-journal notice, warnings, translated reasons, limit meters.
 
 ## Integrating into the app (not done yet — needs the owner's go)

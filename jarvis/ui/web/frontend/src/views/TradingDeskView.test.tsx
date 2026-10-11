@@ -2,6 +2,11 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  LIVE_RESPONSES,
+  liveMissingSource,
+  liveOverview,
+} from "@/components/trading/live/liveFixtures";
 import { RESPONSES, missingSource, overview } from "@/components/trading/testFixtures";
 import {
   DEFAULT_TRADING_LANGUAGE,
@@ -40,7 +45,7 @@ function stubFetch(responses: Record<string, unknown>) {
 beforeEach(() => {
   localStorage.clear();
   useTradingLanguageStore.setState({ lang: DEFAULT_TRADING_LANGUAGE });
-  stubFetch(RESPONSES);
+  stubFetch({ ...RESPONSES, ...LIVE_RESPONSES });
 });
 
 afterEach(() => {
@@ -140,5 +145,100 @@ describe("TradingDeskView", () => {
     const tab = await screen.findByTestId("trading-positions");
     expect(within(tab).getByText("Long")).toBeTruthy();
     expect(within(tab).getAllByRole("meter").length).toBe(5);
+  });
+});
+
+describe("TradingDeskView — LIVE history", () => {
+  async function openLive() {
+    renderView(<TradingDeskView />);
+    await screen.findByText("14-Tage-Paper-Test");
+    const before = calls.length;
+    fireEvent.click(screen.getByRole("tab", { name: "LIVE" }));
+    await screen.findByTestId("trading-live-banner");
+    return before;
+  }
+
+  it("opens on PAPER and switches to a separately labelled LIVE view", async () => {
+    await openLive();
+    expect(screen.queryByTestId("trading-paper-banner")).toBeNull();
+    expect(screen.getByTestId("trading-live-banner").textContent).toContain("echte Kontodaten"); // i18n-allow: asserts the German default UI text
+    expect(screen.getByText("Trading (LIVE-Historie)")).toBeTruthy();
+    expect(await screen.findByTestId("live-overview")).toBeTruthy();
+    expect(screen.queryByText("14-Tage-Paper-Test")).toBeNull();
+  });
+
+  it("reads only LIVE routes once in LIVE mode, and only with GET", async () => {
+    const before = await openLive();
+    for (const tab of ["positions", "trades", "costs", "reconciliation", "sources"]) {
+      fireEvent.mouseDown(screen.getByTestId(`live-tab-${tab}`));
+      await screen.findByTestId(`live-${tab}`);
+    }
+    const after = calls.slice(before);
+    expect(after.length).toBeGreaterThan(5);
+    for (const c of after) {
+      expect(c.method).toBe("GET");
+      expect(c.url.startsWith("/api/trading/live/")).toBe(true);
+    }
+  });
+
+  it("offers no action besides tabs, mode, language and reload", async () => {
+    await openLive();
+    await screen.findByTestId("live-overview");
+    const labels = screen
+      .getAllByRole("button")
+      .map((b) => (b.getAttribute("aria-label") ?? b.textContent ?? "").trim());
+    expect(labels).toEqual(["Neu laden"]);
+  });
+
+  it("shows the balance in USDT and the differences found", async () => {
+    await openLive();
+    const tab = await screen.findByTestId("live-overview");
+    expect(within(tab).getAllByText(/USDT/).length).toBeGreaterThan(3);
+    expect(within(tab).getByRole("group", { name: "Abweichungen" }).textContent).toContain("7");
+  });
+
+  it("translates reconciliation codes and states the journal is not independent", async () => {
+    await openLive();
+    fireEvent.mouseDown(screen.getByTestId("live-tab-reconciliation"));
+    const tab = await screen.findByTestId("live-reconciliation");
+    expect(within(tab).getByText("Gebühr weicht ab")).toBeTruthy();
+    expect(within(tab).getByText(/Kontostandsänderung ohne Trade/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    expect(within(tab).getByText(/keine unabhängige/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
+  });
+
+  it("lists import issues by line and field, never by content", async () => {
+    await openLive();
+    fireEvent.mouseDown(screen.getByTestId("live-tab-sources"));
+    const tab = await screen.findByTestId("live-sources");
+    expect(within(tab).getByText("Kein gültiger Zeitstempel")).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    expect(within(tab).getByText(/Zeile 4/)).toBeTruthy();
+    expect(within(tab).queryByText(/not-a-time/)).toBeNull();
+  });
+
+  it("explains a missing archive instead of failing", async () => {
+    stubFetch({
+      ...RESPONSES,
+      ...LIVE_RESPONSES,
+      "live/overview": { ...liveOverview, source: liveMissingSource, balance: null },
+    });
+    await openLive();
+    const notice = await screen.findByTestId("live-source-notice");
+    expect(notice.textContent).toContain("Kein LIVE-Archiv gefunden");
+    expect(notice.textContent).toContain("live_history.sqlite");
+    expect(screen.queryByTestId("live-overview")).toBeNull();
+  });
+
+  it("shows LIVE warnings in LIVE wording", async () => {
+    stubFetch({
+      ...RESPONSES,
+      ...LIVE_RESPONSES,
+      "live/overview": {
+        ...liveOverview,
+        source: { ...liveOverview.source, warnings: ["sync_old"] },
+      },
+    });
+    await openLive();
+    const list = await screen.findByTestId("live-warnings");
+    expect(within(list).getByText(/keine automatische Synchronisierung/)).toBeTruthy();
   });
 });

@@ -292,5 +292,304 @@
   },
   "time": {
     "utc_note": "Times in your local time zone; the job schedules in UTC."
+  },
+  "mode": {
+    "label": "View",
+    "paper": "Paper",
+    "live": "LIVE"
+  },
+  "live": {
+    "title": "Trading (LIVE history)",
+    "subtitle": "Read-only view of the real account from the local LIVE archive.",
+    "banner": "LIVE – real account data, read-only. Separate from the paper test. This view cannot trade, sync or import; new data only arrives through a sync or CSV import you start.",
+    "loading": "Loading LIVE archive …",
+    "updated": "Archive as of {time}.",
+    "definitions": "Realized = the exchange's result before fees and funding. Net = realized − fees + funding. Funding: negative = paid. Totals over closed positions; days and months in UTC.",
+    "tabs": {
+      "overview": "Account",
+      "positions": "Positions",
+      "trades": "Trades",
+      "costs": "Fees & funding",
+      "reconciliation": "Reconciliation",
+      "sources": "Data & imports"
+    },
+    "source": {
+      "missing": "No LIVE archive found ({file}). It is only created by a sync or CSV import (python -m jarvis.live_history …). Set the path in jarvis.toml under [trading_dashboard] live_archive_path.",
+      "busy": "A sync or import is writing to the archive. The view retries on the next poll.",
+      "invalid": "The file {file} is not a LIVE archive.",
+      "error": "The LIVE archive could not be read: {detail}"
+    },
+    "warning": {
+      "no_sync_yet": "No successful sync yet – the archive only holds imported data.",
+      "sync_old": "The last successful sync is older than 7 days. There is no automatic sync.",
+      "last_run_failed": "The last run failed (see “Data & imports”).",
+      "last_run_partial": "The last run was incomplete (see “Data & imports”).",
+      "coverage_gaps": "The archive misses periods the API could still serve (see “Data & imports”).",
+      "import_issues": "The last CSV import had problems (see “Data & imports”).",
+      "records_truncated": "The archive is very large; only the newest entries are shown."
+    },
+    "overview": {
+      "wallet": "Balance",
+      "wallet_hint": "Available {available} · unrealized {unrealized}",
+      "no_balance": "No observation yet",
+      "net": "Net result",
+      "net_hint": "Realized {realized} − fees {fees} + funding {funding}",
+      "net_30d": "Net, 30 days",
+      "net_30d_hint": "{n} closed positions",
+      "findings": "Differences",
+      "findings_hint": "{errors} errors · {warnings} warnings · {infos} info",
+      "pnl_chart": "Cumulative net result (by close day)",
+      "balance_chart": "Balance per observation",
+      "no_series": "Not enough data for a curve yet.",
+      "facts": "Holdings",
+      "closed": "Closed positions",
+      "open": "Open positions",
+      "open_value": "{n} · unrealized {unrealized}",
+      "fills": "Trades (fills)",
+      "orders": "Orders",
+      "win_rate": "Win rate",
+      "win_rate_value": "{rate} ({wins} wins / {losses} losses)",
+      "last_sync": "Last sync",
+      "never": "never",
+      "last_run": "Last run",
+      "run_value": "{kind} · {status} · {time}"
+    },
+    "positions": {
+      "open_title": "Open positions",
+      "open_none": "No open positions.",
+      "closed_title": "Closed positions",
+      "closed_none": "No closed positions.",
+      "filter": "Market",
+      "all": "All",
+      "id": "Position",
+      "side": "Side",
+      "qty": "Size",
+      "entry": "Entry",
+      "close": "Exit",
+      "fee": "Fees",
+      "funding": "Funding",
+      "realized": "Realized",
+      "net": "Net",
+      "unrealized": "Unrealized",
+      "opened": "Opened",
+      "closed_at": "Closed",
+      "origin": "Source",
+      "findings": "Reconciliation",
+      "count": "{shown} of {total}",
+      "more": "Load older"
+    },
+    "origin": {
+      "api": "API",
+      "csv": "CSV"
+    },
+    "trades": {
+      "title": "Trades (fills)",
+      "none": "No trades in the archive.",
+      "time": "Time",
+      "order": "Order",
+      "position": "Position",
+      "side": "Side",
+      "qty": "Quantity",
+      "price": "Price",
+      "fee": "Fee",
+      "realized": "Realized",
+      "role": "Role",
+      "count": "{shown} of {total}",
+      "fees_total": "Fees of all {total} trades in this selection: {fees}",
+      "more": "Load older"
+    },
+    "role": {
+      "maker": "Maker",
+      "taker": "Taker",
+      "unknown": "—"
+    },
+    "fill_side": {
+      "buy": "Buy",
+      "sell": "Sell"
+    },
+    "costs": {
+      "fees": "Fees",
+      "fees_hint": "{maker} maker · {taker} taker · {unknown} unknown",
+      "funding_paid": "Funding paid",
+      "funding_received": "Funding received",
+      "funding_net": "Funding, net",
+      "fee_share": "Fee share",
+      "fee_share_hint": "Fees relative to the absolute realized result",
+      "by_month": "Per month (UTC, by close date)",
+      "by_symbol": "Per market",
+      "month": "Month",
+      "market": "Market",
+      "positions": "Positions",
+      "realized": "Realized",
+      "net": "Net",
+      "none": "No closed positions yet."
+    },
+    "recon": {
+      "summary": "Summary",
+      "journal": "Journal",
+      "journal_none": "No external journal imported – only the internal and the balance checks run.",
+      "span": "Journal period: {from} – {to} (only positions from this period are compared)",
+      "basis": "The journal's P/L definition: {basis}",
+      "compared": "{positions} positions · {entries} journal entries · {matched} matched · {checks} balance checks",
+      "none": "No differences found.",
+      "control_note": "The journal is a control source, not an independent one: if it takes its data from the same exchange, the reconciliation shows transfer errors, not exchange errors.",
+      "col": {
+        "severity": "Level",
+        "check": "Check",
+        "finding": "Finding",
+        "market": "Market",
+        "ids": "Position / entry",
+        "venue": "Exchange",
+        "other": "Compared",
+        "diff": "Difference"
+      },
+      "group": {
+        "internal": "Exchange internal",
+        "journal": "Journal",
+        "balance": "Balance"
+      },
+      "severity": {
+        "error": "Error",
+        "warning": "Warning",
+        "info": "Info"
+      },
+      "code": {
+        "fills_missing": "No fills archived for the position",
+        "fill_fee_mismatch": "Fee ≠ sum of fills",
+        "fill_pnl_mismatch": "Realized ≠ sum of fills",
+        "missing_in_journal": "Missing in the journal",
+        "missing_at_venue": "Missing at the exchange",
+        "ambiguous_match": "Match is ambiguous",
+        "status_mismatch": "Open/closed differs",
+        "price_mismatch": "Exit price differs",
+        "fee_mismatch": "Fee differs",
+        "funding_mismatch": "Funding differs",
+        "pnl_mismatch": "P/L differs",
+        "unexplained_balance_change": "Balance change without a trade (deposit, transfer, bonus …)"
+      },
+      "basis_name": {
+        "gross": "gross (before fees and funding)",
+        "net_of_fees": "after fees, before funding",
+        "net": "net (after fees and funding)",
+        "mixed": "mixed"
+      }
+    },
+    "sources": {
+      "counts": "Archive contents",
+      "entity": {
+        "position": "Positions",
+        "fill": "Trades",
+        "order": "Orders",
+        "balance": "Balance observations",
+        "journal_entry": "Journal entries"
+      },
+      "runs": "Runs (syncs and imports)",
+      "runs_none": "No runs yet.",
+      "col": {
+        "time": "Time",
+        "kind": "Kind",
+        "source": "Source",
+        "status": "Status",
+        "changes": "Changes",
+        "rejected": "Rejected",
+        "requests": "Requests",
+        "error": "Error"
+      },
+      "changes_value": "+{inserted} new · {updated} changed · {unchanged} same",
+      "kind": {
+        "sync": "Sync",
+        "backfill": "Backfill",
+        "import": "CSV import"
+      },
+      "status": {
+        "running": "Running",
+        "ok": "OK",
+        "partial": "Partial",
+        "failed": "Failed"
+      },
+      "imports": "CSV imports",
+      "imports_none": "No CSV imports yet.",
+      "import_kind": {
+        "positions": "Positions (exchange export)",
+        "fills": "Trades (exchange export)",
+        "journal": "External journal"
+      },
+      "digest": "Checksum {digest}",
+      "rows": "{n} rows",
+      "basis_value": "P/L: {basis} ({how})",
+      "how": {
+        "declared": "stated",
+        "inferred": "recognised"
+      },
+      "issues_none": "No problems.",
+      "line": "Line {line}",
+      "file_level": "Whole file",
+      "issue_more": "{n} more",
+      "coverage": "Coverage and gaps",
+      "since": "Checked from {time}",
+      "stream": {
+        "positions": "Positions",
+        "fills": "Trades",
+        "orders": "Orders"
+      },
+      "covered": "Covered",
+      "gaps_none": "No gaps.",
+      "gap": {
+        "api": "API can serve",
+        "export": "CSV export only"
+      },
+      "note": {
+        "retention_unknown": "API retention unknown",
+        "beyond_retention": "Older than the API serves"
+      },
+      "how_to": "Gaps are only filled by a sync, backfill or CSV import you start (python -m jarvis.live_history …). This view starts nothing.",
+      "error": {
+        "network": "Network",
+        "rate_limited": "Rate limit",
+        "unavailable": "Exchange unreachable",
+        "auth": "Sign-in refused",
+        "rejected": "Request refused",
+        "bad_response": "Unexpected response"
+      }
+    },
+    "issue": {
+      "file_too_large": "File too large (max. 20 MB)",
+      "not_text": "Not a text file",
+      "empty_file": "File is empty",
+      "too_many_rows": "Too many rows",
+      "too_many_columns": "Too many columns",
+      "missing_column": "Required column missing",
+      "ambiguous_column": "Column is ambiguous",
+      "unknown_mapping": "Unknown column mapping",
+      "timezone_required": "Time zone needed (times without offset)",
+      "bad_timezone": "Unknown time zone",
+      "pnl_basis_required": "P/L definition not recognisable – please state it",
+      "net_pnl_without_funding": "Net P/L without a funding column",
+      "wrong_column_count": "Wrong number of columns",
+      "cell_too_long": "Cell too long",
+      "missing_value": "Required value missing",
+      "bad_number": "Not a valid number",
+      "not_positive": "Value must be positive",
+      "bad_text": "Characters not allowed",
+      "bad_choice": "Unknown value",
+      "bad_timestamp": "Not a valid timestamp",
+      "nonexistent_local_time": "Local time does not exist (clock change)",
+      "implausible_time": "Time before 2017",
+      "future_time": "Time in the future",
+      "closed_before_opened": "Closed before opened",
+      "foreign_fee_currency": "Fee in another currency",
+      "conflicting_duplicate": "Duplicate id with different content",
+      "conflicts_with_api": "Differs from API data (the API stays authoritative)",
+      "ambiguous_local_time": "Local time occurs twice (clock change)",
+      "duplicate_in_file": "Duplicate row skipped",
+      "encoding_fallback": "Read as Windows-1252",
+      "fee_sign_flipped": "Negative fees read as costs",
+      "mixed_fee_signs": "Fees with mixed signs",
+      "no_funding_column": "No funding column",
+      "pnl_basis_inferred": "P/L definition recognised from the rows",
+      "pnl_basis_doubtful": "Stated P/L definition does not fit the rows",
+      "already_imported": "File was imported before",
+      "issues_truncated": "Further issues not stored"
+    }
   }
 }

@@ -292,5 +292,304 @@
   },
   "time": {
     "utc_note": "Zeiten in deiner lokalen Zeitzone; der Job plant in UTC."
+  },
+  "mode": {
+    "label": "Ansicht",
+    "paper": "Paper",
+    "live": "LIVE"
+  },
+  "live": {
+    "title": "Trading (LIVE-Historie)",
+    "subtitle": "Nur-Lese-Ansicht des echten Kontos aus dem lokalen LIVE-Archiv.",
+    "banner": "LIVE – echte Kontodaten, nur lesend. Getrennt vom Paper-Test. Diese Ansicht kann nichts handeln, synchronisieren oder importieren; neue Daten kommen nur durch einen von dir gestarteten Sync oder CSV-Import.",
+    "loading": "Lade LIVE-Archiv …",
+    "updated": "Archivstand {time}.",
+    "definitions": "Realisiert = Ergebnis laut Börse ohne Gebühren und Funding. Netto = realisiert − Gebühren + Funding. Funding: negativ = gezahlt. Summen über geschlossene Positionen, Tage und Monate in UTC.",
+    "tabs": {
+      "overview": "Konto",
+      "positions": "Positionen",
+      "trades": "Trades",
+      "costs": "Gebühren & Funding",
+      "reconciliation": "Abgleich",
+      "sources": "Daten & Importe"
+    },
+    "source": {
+      "missing": "Kein LIVE-Archiv gefunden ({file}). Es entsteht erst durch einen Sync oder CSV-Import (python -m jarvis.live_history …). Den Pfad legst du in jarvis.toml unter [trading_dashboard] live_archive_path fest.",
+      "busy": "Ein Sync oder Import schreibt gerade ins Archiv. Die Anzeige versucht es beim nächsten Abruf erneut.",
+      "invalid": "Die Datei {file} ist kein LIVE-Archiv.",
+      "error": "Das LIVE-Archiv konnte nicht gelesen werden: {detail}"
+    },
+    "warning": {
+      "no_sync_yet": "Noch kein erfolgreicher Sync – das Archiv enthält nur importierte Daten.",
+      "sync_old": "Der letzte erfolgreiche Sync ist älter als 7 Tage. Es gibt keine automatische Synchronisierung.",
+      "last_run_failed": "Der letzte Lauf ist fehlgeschlagen (siehe „Daten & Importe“).",
+      "last_run_partial": "Der letzte Lauf war unvollständig (siehe „Daten & Importe“).",
+      "coverage_gaps": "Im Archiv fehlen Zeiträume, die die API noch liefern könnte (siehe „Daten & Importe“).",
+      "import_issues": "Der letzte CSV-Import hatte Probleme (siehe „Daten & Importe“).",
+      "records_truncated": "Das Archiv ist sehr groß; es werden nur die neuesten Einträge gezeigt."
+    },
+    "overview": {
+      "wallet": "Kontostand",
+      "wallet_hint": "Verfügbar {available} · unrealisiert {unrealized}",
+      "no_balance": "Noch keine Beobachtung",
+      "net": "Netto-Ergebnis",
+      "net_hint": "Realisiert {realized} − Gebühren {fees} + Funding {funding}",
+      "net_30d": "Netto 30 Tage",
+      "net_30d_hint": "{n} geschlossene Positionen",
+      "findings": "Abweichungen",
+      "findings_hint": "{errors} Fehler · {warnings} Hinweise · {infos} Info",
+      "pnl_chart": "Netto-Ergebnis kumuliert (nach Schließtag)",
+      "balance_chart": "Kontostand je Beobachtung",
+      "no_series": "Noch zu wenige Daten für einen Verlauf.",
+      "facts": "Bestand",
+      "closed": "Geschlossene Positionen",
+      "open": "Offene Positionen",
+      "open_value": "{n} · unrealisiert {unrealized}",
+      "fills": "Trades (Fills)",
+      "orders": "Orders",
+      "win_rate": "Trefferquote",
+      "win_rate_value": "{rate} ({wins} Gewinne / {losses} Verluste)",
+      "last_sync": "Letzter Sync",
+      "never": "noch nie",
+      "last_run": "Letzter Lauf",
+      "run_value": "{kind} · {status} · {time}"
+    },
+    "positions": {
+      "open_title": "Offene Positionen",
+      "open_none": "Keine offenen Positionen.",
+      "closed_title": "Geschlossene Positionen",
+      "closed_none": "Keine geschlossenen Positionen.",
+      "filter": "Markt",
+      "all": "Alle",
+      "id": "Position",
+      "side": "Seite",
+      "qty": "Größe",
+      "entry": "Einstieg",
+      "close": "Ausstieg",
+      "fee": "Gebühren",
+      "funding": "Funding",
+      "realized": "Realisiert",
+      "net": "Netto",
+      "unrealized": "Unrealisiert",
+      "opened": "Eröffnet",
+      "closed_at": "Geschlossen",
+      "origin": "Quelle",
+      "findings": "Abgleich",
+      "count": "{shown} von {total}",
+      "more": "Ältere laden"
+    },
+    "origin": {
+      "api": "API",
+      "csv": "CSV"
+    },
+    "trades": {
+      "title": "Trades (Fills)",
+      "none": "Keine Trades im Archiv.",
+      "time": "Zeit",
+      "order": "Order",
+      "position": "Position",
+      "side": "Seite",
+      "qty": "Menge",
+      "price": "Preis",
+      "fee": "Gebühr",
+      "realized": "Realisiert",
+      "role": "Rolle",
+      "count": "{shown} von {total}",
+      "fees_total": "Gebühren aller {total} Trades dieser Auswahl: {fees}",
+      "more": "Ältere laden"
+    },
+    "role": {
+      "maker": "Maker",
+      "taker": "Taker",
+      "unknown": "—"
+    },
+    "fill_side": {
+      "buy": "Kauf",
+      "sell": "Verkauf"
+    },
+    "costs": {
+      "fees": "Gebühren",
+      "fees_hint": "{maker} Maker · {taker} Taker · {unknown} ohne Angabe",
+      "funding_paid": "Funding gezahlt",
+      "funding_received": "Funding erhalten",
+      "funding_net": "Funding netto",
+      "fee_share": "Gebührenanteil",
+      "fee_share_hint": "Gebühren im Verhältnis zum absoluten realisierten Ergebnis",
+      "by_month": "Je Monat (UTC, nach Schließdatum)",
+      "by_symbol": "Je Markt",
+      "month": "Monat",
+      "market": "Markt",
+      "positions": "Positionen",
+      "realized": "Realisiert",
+      "net": "Netto",
+      "none": "Noch keine geschlossenen Positionen."
+    },
+    "recon": {
+      "summary": "Zusammenfassung",
+      "journal": "Journal",
+      "journal_none": "Kein externes Journal importiert – es laufen nur die internen und die Kontostand-Prüfungen.",
+      "span": "Zeitraum des Journals: {from} – {to} (nur Positionen aus diesem Zeitraum werden verglichen)",
+      "basis": "P/L-Definition des Journals: {basis}",
+      "compared": "{positions} Positionen · {entries} Journal-Einträge · {matched} zugeordnet · {checks} Kontostand-Prüfungen",
+      "none": "Keine Abweichungen gefunden.",
+      "control_note": "Das Journal ist eine Kontrollquelle, keine unabhängige: Bezieht es seine Daten von derselben Börse, zeigt der Abgleich Übertragungsfehler, keine Börsenfehler.",
+      "col": {
+        "severity": "Stufe",
+        "check": "Prüfung",
+        "finding": "Befund",
+        "market": "Markt",
+        "ids": "Position / Eintrag",
+        "venue": "Börse",
+        "other": "Vergleich",
+        "diff": "Differenz"
+      },
+      "group": {
+        "internal": "Börse intern",
+        "journal": "Journal",
+        "balance": "Kontostand"
+      },
+      "severity": {
+        "error": "Fehler",
+        "warning": "Hinweis",
+        "info": "Info"
+      },
+      "code": {
+        "fills_missing": "Keine Fills zur Position archiviert",
+        "fill_fee_mismatch": "Gebühr ≠ Summe der Fills",
+        "fill_pnl_mismatch": "Realisiert ≠ Summe der Fills",
+        "missing_in_journal": "Fehlt im Journal",
+        "missing_at_venue": "Fehlt bei der Börse",
+        "ambiguous_match": "Zuordnung nicht eindeutig",
+        "status_mismatch": "Offen/geschlossen unterschiedlich",
+        "price_mismatch": "Ausstiegspreis weicht ab",
+        "fee_mismatch": "Gebühr weicht ab",
+        "funding_mismatch": "Funding weicht ab",
+        "pnl_mismatch": "P/L weicht ab",
+        "unexplained_balance_change": "Kontostandsänderung ohne Trade (Einzahlung, Transfer, Bonus …)"
+      },
+      "basis_name": {
+        "gross": "brutto (vor Gebühren und Funding)",
+        "net_of_fees": "nach Gebühren, vor Funding",
+        "net": "netto (nach Gebühren und Funding)",
+        "mixed": "gemischt"
+      }
+    },
+    "sources": {
+      "counts": "Archivinhalt",
+      "entity": {
+        "position": "Positionen",
+        "fill": "Trades",
+        "order": "Orders",
+        "balance": "Kontostand-Beobachtungen",
+        "journal_entry": "Journal-Einträge"
+      },
+      "runs": "Läufe (Syncs und Importe)",
+      "runs_none": "Noch keine Läufe.",
+      "col": {
+        "time": "Zeit",
+        "kind": "Art",
+        "source": "Quelle",
+        "status": "Status",
+        "changes": "Änderungen",
+        "rejected": "Abgelehnt",
+        "requests": "Anfragen",
+        "error": "Fehler"
+      },
+      "changes_value": "+{inserted} neu · {updated} geändert · {unchanged} gleich",
+      "kind": {
+        "sync": "Sync",
+        "backfill": "Backfill",
+        "import": "CSV-Import"
+      },
+      "status": {
+        "running": "Läuft",
+        "ok": "OK",
+        "partial": "Teilweise",
+        "failed": "Fehlgeschlagen"
+      },
+      "imports": "CSV-Importe",
+      "imports_none": "Noch keine CSV-Importe.",
+      "import_kind": {
+        "positions": "Positionen (Börsen-Export)",
+        "fills": "Trades (Börsen-Export)",
+        "journal": "Externes Journal"
+      },
+      "digest": "Prüfsumme {digest}",
+      "rows": "{n} Zeilen",
+      "basis_value": "P/L: {basis} ({how})",
+      "how": {
+        "declared": "angegeben",
+        "inferred": "erkannt"
+      },
+      "issues_none": "Keine Probleme.",
+      "line": "Zeile {line}",
+      "file_level": "Ganze Datei",
+      "issue_more": "{n} weitere",
+      "coverage": "Abdeckung und Lücken",
+      "since": "Geprüft ab {time}",
+      "stream": {
+        "positions": "Positionen",
+        "fills": "Trades",
+        "orders": "Orders"
+      },
+      "covered": "Abgedeckt",
+      "gaps_none": "Keine Lücken.",
+      "gap": {
+        "api": "API kann liefern",
+        "export": "Nur per CSV-Export"
+      },
+      "note": {
+        "retention_unknown": "Aufbewahrung der API unbekannt",
+        "beyond_retention": "Älter als die API liefert"
+      },
+      "how_to": "Lücken füllt nur ein von dir gestarteter Sync, Backfill oder CSV-Import (python -m jarvis.live_history …). Diese Ansicht startet nichts.",
+      "error": {
+        "network": "Netzwerk",
+        "rate_limited": "Rate-Limit",
+        "unavailable": "Börse nicht erreichbar",
+        "auth": "Anmeldung abgelehnt",
+        "rejected": "Anfrage abgelehnt",
+        "bad_response": "Unerwartete Antwort"
+      }
+    },
+    "issue": {
+      "file_too_large": "Datei zu groß (max. 20 MB)",
+      "not_text": "Keine Textdatei",
+      "empty_file": "Datei ist leer",
+      "too_many_rows": "Zu viele Zeilen",
+      "too_many_columns": "Zu viele Spalten",
+      "missing_column": "Pflichtspalte fehlt",
+      "ambiguous_column": "Spalte nicht eindeutig",
+      "unknown_mapping": "Unbekannte Spaltenzuordnung",
+      "timezone_required": "Zeitzone nötig (Zeiten ohne Offset)",
+      "bad_timezone": "Unbekannte Zeitzone",
+      "pnl_basis_required": "P/L-Definition nicht erkennbar – bitte angeben",
+      "net_pnl_without_funding": "Netto-P/L ohne Funding-Spalte",
+      "wrong_column_count": "Falsche Spaltenzahl",
+      "cell_too_long": "Zelle zu lang",
+      "missing_value": "Pflichtwert fehlt",
+      "bad_number": "Keine gültige Zahl",
+      "not_positive": "Wert muss positiv sein",
+      "bad_text": "Unzulässige Zeichen",
+      "bad_choice": "Unbekannter Wert",
+      "bad_timestamp": "Kein gültiger Zeitstempel",
+      "nonexistent_local_time": "Ortszeit existiert nicht (Zeitumstellung)",
+      "implausible_time": "Zeit vor 2017",
+      "future_time": "Zeit in der Zukunft",
+      "closed_before_opened": "Geschlossen vor Eröffnung",
+      "foreign_fee_currency": "Gebühr in fremder Währung",
+      "conflicting_duplicate": "Doppelte ID mit anderem Inhalt",
+      "conflicts_with_api": "Weicht von API-Daten ab (API bleibt maßgeblich)",
+      "ambiguous_local_time": "Ortszeit doppelt (Zeitumstellung)",
+      "duplicate_in_file": "Doppelte Zeile übersprungen",
+      "encoding_fallback": "Als Windows-1252 gelesen",
+      "fee_sign_flipped": "Negative Gebühren als Kosten gelesen",
+      "mixed_fee_signs": "Gebühren mit gemischten Vorzeichen",
+      "no_funding_column": "Keine Funding-Spalte",
+      "pnl_basis_inferred": "P/L-Definition aus den Zeilen erkannt",
+      "pnl_basis_doubtful": "Angegebene P/L-Definition passt nicht zu den Zeilen",
+      "already_imported": "Datei war schon importiert",
+      "issues_truncated": "Weitere Probleme nicht gespeichert"
+    }
   }
 }

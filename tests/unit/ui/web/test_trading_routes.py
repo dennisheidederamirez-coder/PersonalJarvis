@@ -21,6 +21,8 @@ ENDPOINTS = (
     "health",
     "reports",
 )
+#: The LIVE history's routes (tested in ``tests/unit/trading_dashboard/test_live_dashboard.py``).
+LIVE_ENDPOINTS = ("overview", "positions", "trades", "costs", "reconciliation", "sources")
 
 
 def _client(data_dir: Path, journal_path: str = "") -> TestClient:
@@ -47,7 +49,7 @@ def test_the_router_has_only_get_routes() -> None:
     assert methods == {"GET"}
     assert {getattr(r, "path", "") for r in router.routes} == {
         f"/api/trading/{e}" for e in ENDPOINTS
-    }
+    } | {f"/api/trading/live/{e}" for e in LIVE_ENDPOINTS}
 
 
 def test_every_endpoint_answers_from_the_configured_journal(run: PaperRun, tmp_path: Path) -> None:

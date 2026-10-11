@@ -359,3 +359,230 @@ export interface TradingReportsView {
   source: TradingSource;
   reports: TradingDailyReport[];
 }
+
+// ---------------------------------------------------------------------------
+// LIVE history (`/api/trading/live/*`) — the real account from the LIVE
+// archive. Never shares a type with the paper views above. Amounts are in the
+// margin coin (USDT); `realized` is the venue's P/L EXCLUDING fees and
+// funding, `net` includes both; `funding` is signed (negative = paid).
+// ---------------------------------------------------------------------------
+
+export interface TradingLiveBalancePoint {
+  ts_ms: number;
+  wallet: number;
+  available: number;
+  unrealized: number;
+}
+
+export interface TradingLiveCostRow {
+  key: string;
+  positions: number;
+  realized: number;
+  fees: number;
+  funding_paid: number;
+  funding_received: number;
+  funding: number;
+  net: number;
+  fee_share: number | null;
+}
+
+export interface TradingLiveCostsView {
+  source: TradingLiveSource;
+  totals: TradingLiveTotals;
+  by_month: TradingLiveCostRow[];
+  by_symbol: TradingLiveCostRow[];
+  fee_share: number | null;
+  maker_fills: number;
+  taker_fills: number;
+  unknown_role_fills: number;
+}
+
+export interface TradingLiveCoverage {
+  stream: string;
+  intervals: TradingLiveInterval[];
+  gaps: TradingLiveGap[];
+}
+
+export interface TradingLiveFill {
+  trade_id: string;
+  order_id: string;
+  position_id: string | null;
+  symbol: string;
+  side: string | null;
+  qty: number;
+  price: number;
+  fee: number;
+  realized: number;
+  role: string | null;
+  ts_ms: number;
+  origin: string;
+}
+
+export interface TradingLiveFinding {
+  code: string;
+  severity: string;
+  group: string;
+  position_id: string | null;
+  entry_id: string | null;
+  symbol: string | null;
+  venue_value: number | null;
+  other_value: number | null;
+  difference: number | null;
+  ts_ms: number | null;
+}
+
+export interface TradingLiveGap {
+  stream: string;
+  from_ms: number;
+  to_ms: number;
+  route: string;
+  note: string;
+}
+
+export interface TradingLiveImport {
+  run: TradingLiveRun;
+  kind: string;
+  file_digest: string;
+  rows: number | null;
+  pnl_basis: string | null;
+  pnl_basis_source: string | null;
+  issue_counts: Record<string, number>;
+  issues: TradingLiveImportIssue[];
+}
+
+export interface TradingLiveImportIssue {
+  line: number | null;
+  code: string;
+  severity: string;
+  field: string | null;
+}
+
+export interface TradingLiveInterval {
+  from_ms: number;
+  to_ms: number;
+}
+
+export interface TradingLiveOverview {
+  source: TradingLiveSource;
+  margin_coin: string | null;
+  balance: TradingLiveBalancePoint | null;
+  balance_series: TradingLiveBalancePoint[];
+  totals: TradingLiveTotals;
+  totals_30d: TradingLiveTotals;
+  pnl_series: TradingLivePnlPoint[];
+  open_positions: number;
+  open_unrealized: number;
+  fills: number;
+  orders: number;
+  findings: Record<string, number>;
+  last_run: TradingLiveRun | null;
+}
+
+export interface TradingLivePnlPoint {
+  day: string;
+  net: number;
+  cumulative: number;
+}
+
+export interface TradingLivePosition {
+  position_id: string;
+  symbol: string;
+  side: string;
+  status: string;
+  qty: number;
+  entry_price: number;
+  close_price: number | null;
+  fee: number;
+  funding: number;
+  realized: number;
+  net: number;
+  unrealized: number | null;
+  leverage: number | null;
+  opened_ms: number;
+  closed_ms: number | null;
+  origin: string;
+  findings: string[];
+}
+
+export interface TradingLivePositionsView {
+  source: TradingLiveSource;
+  open: TradingLivePosition[];
+  closed: TradingLivePosition[];
+  total_closed: number;
+  offset: number;
+  limit: number;
+  symbols: string[];
+}
+
+export interface TradingLiveReconciliationView {
+  source: TradingLiveSource;
+  journals: string[];
+  journal: string | null;
+  journal_from_ms: number | null;
+  journal_to_ms: number | null;
+  pnl_basis: string | null;
+  positions_compared: number;
+  entries_compared: number;
+  matched: number;
+  balance_checks: number;
+  counts: Record<string, number>;
+  findings: TradingLiveFinding[];
+}
+
+export interface TradingLiveRun {
+  id: number;
+  kind: string;
+  source: string;
+  started_ms: number;
+  finished_ms: number | null;
+  status: string;
+  requests: number;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  rejected: number;
+  error_code: string | null;
+}
+
+export interface TradingLiveSource {
+  state: string;
+  detail: string;
+  file_name: string;
+  read_at_ms: number;
+  archive_mtime_ms: number | null;
+  size_bytes: number | null;
+  read_ms: number | null;
+  last_sync_ms: number | null;
+  last_import_ms: number | null;
+  warnings: string[];
+}
+
+export interface TradingLiveSourcesView {
+  source: TradingLiveSource;
+  counts: Record<string, number>;
+  runs: TradingLiveRun[];
+  imports: TradingLiveImport[];
+  coverage: TradingLiveCoverage[];
+  since_ms: number;
+}
+
+export interface TradingLiveTotals {
+  realized: number;
+  fees: number;
+  funding: number;
+  net: number;
+  closed: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+}
+
+export interface TradingLiveTradesView {
+  source: TradingLiveSource;
+  fills: TradingLiveFill[];
+  total: number;
+  offset: number;
+  limit: number;
+  symbols: string[];
+  fees: number;
+}

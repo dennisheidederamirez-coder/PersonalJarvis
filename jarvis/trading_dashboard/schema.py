@@ -356,6 +356,267 @@ class ReportsView(BaseModel):
     reports: list[DailyReport]
 
 
+# --------------------------------------------------------------------- LIVE
+#
+# The LIVE history (``/api/trading/live/*``) reads a different file — the
+# archive of ``jarvis.live_history`` — and never shares a model with the
+# paper views above: a paper number can never land in a LIVE field. Amounts
+# are in the margin coin (USDT); the venue's realized P/L EXCLUDES fees and
+# funding, ``net`` includes both; ``funding`` is signed (negative = paid).
+
+
+class LiveSource(BaseModel):
+    """Where the LIVE numbers came from and how complete they are."""
+
+    state: str
+    """ok / missing / busy / invalid / error (``reader.SourceState``)."""
+    detail: str
+    file_name: str
+    read_at_ms: int
+    archive_mtime_ms: int | None = None
+    size_bytes: int | None = None
+    read_ms: float | None = None
+    last_sync_ms: int | None = None
+    """End of the last successful API sync (``None`` = never)."""
+    last_import_ms: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+    """Codes: no_sync_yet, last_run_failed, last_run_partial, sync_old,
+    coverage_gaps, import_issues, records_truncated."""
+
+
+class LiveTotals(BaseModel):
+    realized: float
+    """The venue's realized P/L: excludes fees and funding."""
+    fees: float
+    funding: float
+    net: float
+    closed: int
+    wins: int
+    losses: int
+    win_rate: float | None = None
+
+
+class LiveBalancePoint(BaseModel):
+    ts_ms: int
+    wallet: float
+    """available + frozen + margin: what fees, funding and closes move."""
+    available: float
+    unrealized: float
+
+
+class LivePnlPoint(BaseModel):
+    day: str
+    """UTC day the positions closed (YYYY-MM-DD)."""
+    net: float
+    cumulative: float
+
+
+class LiveRun(BaseModel):
+    id: int
+    kind: str
+    """sync / backfill / import."""
+    source: str
+    """simulated, api, csv:positions, csv:fills, csv:journal …"""
+    started_ms: int
+    finished_ms: int | None = None
+    status: str
+    """running / ok / partial / failed."""
+    requests: int
+    inserted: int
+    updated: int
+    unchanged: int
+    rejected: int
+    error_code: str | None = None
+
+
+class LiveOverview(BaseModel):
+    source: LiveSource
+    margin_coin: str | None = None
+    balance: LiveBalancePoint | None = None
+    balance_series: list[LiveBalancePoint]
+    totals: LiveTotals
+    totals_30d: LiveTotals
+    pnl_series: list[LivePnlPoint]
+    open_positions: int
+    open_unrealized: float
+    fills: int
+    orders: int
+    findings: dict[str, int]
+    """Reconciliation findings per severity (error / warning / info)."""
+    last_run: LiveRun | None = None
+
+
+class LivePosition(BaseModel):
+    position_id: str
+    symbol: str
+    side: str
+    status: str
+    """open / closed."""
+    qty: float
+    entry_price: float
+    close_price: float | None = None
+    fee: float
+    funding: float
+    realized: float
+    net: float
+    unrealized: float | None = None
+    leverage: int | None = None
+    opened_ms: int
+    closed_ms: int | None = None
+    origin: str
+    """api / csv — where the stored copy came from."""
+    findings: list[str]
+    """Reconciliation codes that concern this position."""
+
+
+class LivePositionsView(BaseModel):
+    source: LiveSource
+    open: list[LivePosition]
+    closed: list[LivePosition]
+    total_closed: int
+    offset: int
+    limit: int
+    symbols: list[str]
+
+
+class LiveFill(BaseModel):
+    trade_id: str
+    order_id: str
+    position_id: str | None = None
+    symbol: str
+    side: str | None = None
+    qty: float
+    price: float
+    fee: float
+    realized: float
+    role: str | None = None
+    ts_ms: int
+    origin: str
+
+
+class LiveTradesView(BaseModel):
+    source: LiveSource
+    fills: list[LiveFill]
+    total: int
+    offset: int
+    limit: int
+    symbols: list[str]
+    fees: float
+    """Fees of every fill that matches the filter (not only this page)."""
+
+
+class LiveCostRow(BaseModel):
+    key: str
+    """A month (YYYY-MM, UTC) or a symbol."""
+    positions: int
+    realized: float
+    fees: float
+    funding_paid: float
+    funding_received: float
+    funding: float
+    net: float
+    fee_share: float | None = None
+    """Fees as a share of the gross result's absolute value."""
+
+
+class LiveCostsView(BaseModel):
+    source: LiveSource
+    totals: LiveTotals
+    by_month: list[LiveCostRow]
+    by_symbol: list[LiveCostRow]
+    fee_share: float | None = None
+    """All fees as a share of the gross results' absolute value."""
+    maker_fills: int
+    taker_fills: int
+    unknown_role_fills: int
+
+
+class LiveFinding(BaseModel):
+    code: str
+    """A ``reconcile.Code`` value."""
+    severity: str
+    """error / warning / info."""
+    group: str
+    """internal / journal / balance."""
+    position_id: str | None = None
+    entry_id: str | None = None
+    symbol: str | None = None
+    venue_value: float | None = None
+    other_value: float | None = None
+    difference: float | None = None
+    ts_ms: int | None = None
+
+
+class LiveReconciliationView(BaseModel):
+    source: LiveSource
+    journals: list[str]
+    journal: str | None = None
+    """The journal compared (``None`` = none imported)."""
+    journal_from_ms: int | None = None
+    journal_to_ms: int | None = None
+    pnl_basis: str | None = None
+    """The P/L definition the journal's entries use."""
+    positions_compared: int
+    entries_compared: int
+    matched: int
+    balance_checks: int
+    counts: dict[str, int]
+    """Findings per code."""
+    findings: list[LiveFinding]
+
+
+class LiveInterval(BaseModel):
+    from_ms: int
+    to_ms: int
+
+
+class LiveGap(BaseModel):
+    stream: str
+    from_ms: int
+    to_ms: int
+    route: str
+    """api (the venue still serves it) / export (only its CSV export can)."""
+    note: str
+
+
+class LiveCoverage(BaseModel):
+    stream: str
+    """positions / fills / orders."""
+    intervals: list[LiveInterval]
+    gaps: list[LiveGap]
+
+
+class LiveImportIssue(BaseModel):
+    line: int | None = None
+    code: str
+    severity: str
+    field: str | None = None
+
+
+class LiveImport(BaseModel):
+    run: LiveRun
+    kind: str
+    """positions / fills / journal."""
+    file_digest: str
+    """First 12 hex digits of the file's SHA-256 (never its name or path)."""
+    rows: int | None = None
+    pnl_basis: str | None = None
+    pnl_basis_source: str | None = None
+    issue_counts: dict[str, int]
+    issues: list[LiveImportIssue]
+
+
+class LiveSourcesView(BaseModel):
+    source: LiveSource
+    counts: dict[str, int]
+    """Records per entity, plus journal entries."""
+    runs: list[LiveRun]
+    imports: list[LiveImport]
+    coverage: list[LiveCoverage]
+    since_ms: int
+    """The start of the coverage check."""
+
+
 __all__ = [
     "Account",
     "AccountRisk",
@@ -370,6 +631,26 @@ __all__ = [
     "Incident",
     "JobRun",
     "LimitUse",
+    "LiveBalancePoint",
+    "LiveCostRow",
+    "LiveCostsView",
+    "LiveCoverage",
+    "LiveFill",
+    "LiveFinding",
+    "LiveGap",
+    "LiveImport",
+    "LiveImportIssue",
+    "LiveInterval",
+    "LiveOverview",
+    "LivePnlPoint",
+    "LivePosition",
+    "LivePositionsView",
+    "LiveReconciliationView",
+    "LiveRun",
+    "LiveSource",
+    "LiveSourcesView",
+    "LiveTotals",
+    "LiveTradesView",
     "Overview",
     "PendingOrder",
     "PerfRow",

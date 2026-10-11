@@ -4360,11 +4360,15 @@ class TradingDashboardConfig(BaseModel):
     """``[trading_dashboard]`` — the read-only paper-trading dashboard.
 
     ``journal_path`` is the paper job's SQLite journal. Empty = the default
-    ``<memory.data_dir>/trading/paper_journal.sqlite``. The dashboard only
-    ever opens it read-only. Read by ``jarvis/ui/web/trading_routes.py``.
+    ``<memory.data_dir>/trading/paper_journal.sqlite``. ``live_archive_path``
+    is the LIVE history archive (``jarvis.live_history``), a different file
+    that is never mixed with the journal. Empty = the default
+    ``<memory.data_dir>/trading/live_history.sqlite``. The dashboard only ever
+    opens either read-only. Read by ``jarvis/ui/web/trading_routes.py``.
     """
 
     journal_path: str = ""
+    live_archive_path: str = ""
 
 
 class TeamProxyConfig(BaseModel):

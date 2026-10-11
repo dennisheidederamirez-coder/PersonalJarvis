@@ -102,3 +102,34 @@ export function toneClass(value: number | null | undefined): string {
   if (value === null || value === undefined || value === 0) return "text-foreground";
   return value > 0 ? "text-success" : "text-destructive";
 }
+
+/**
+ * A LIVE amount in the margin coin: `1.234,56 USDT`. LIVE amounts are not
+ * dollars, so the paper section's `money` (USD) is not used for them.
+ */
+export function coin(
+  locale: string,
+  value: number | null | undefined,
+  { signed = false, digits = 2, unit = "USDT" }: { signed?: boolean; digits?: number; unit?: string } = {},
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const n = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+    signDisplay: signed ? "exceptZero" : "auto",
+  }).format(value);
+  return unit ? `${n} ${unit}` : n;
+}
+
+/** A UTC day (YYYY-MM-DD) or month (YYYY-MM) as a short local label. */
+export function utcPeriod(locale: string, key: string): string {
+  const month = /^\d{4}-\d{2}$/.test(key);
+  const d = new Date(`${month ? `${key}-01` : key}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return key;
+  return new Intl.DateTimeFormat(
+    locale,
+    month
+      ? { month: "short", year: "numeric", timeZone: "UTC" }
+      : { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" },
+  ).format(d);
+}
