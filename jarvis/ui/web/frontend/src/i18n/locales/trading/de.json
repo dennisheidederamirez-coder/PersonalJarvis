@@ -326,7 +326,8 @@
       "last_run_partial": "Der letzte Lauf war unvollständig (siehe „Daten & Importe“).",
       "coverage_gaps": "Im Archiv fehlen Zeiträume, die die API noch liefern könnte (siehe „Daten & Importe“).",
       "import_issues": "Der letzte CSV-Import hatte Probleme (siehe „Daten & Importe“).",
-      "records_truncated": "Das Archiv ist sehr groß; es werden nur die neuesten Einträge gezeigt."
+      "records_truncated": "Das Archiv ist sehr groß; es werden nur die neuesten Einträge gezeigt.",
+      "origin_unknown": "Die Herkunft dieses Archivs ist nicht gekennzeichnet (echt oder synthetisch). Werte nur mit Vorsicht lesen."
     },
     "overview": {
       "wallet": "Kontostand",
@@ -436,12 +437,13 @@
       "col": {
         "severity": "Stufe",
         "check": "Prüfung",
-        "finding": "Befund",
+        "finding": "Befund und Ursache",
         "market": "Markt",
         "ids": "Position / Eintrag",
         "venue": "Börse",
-        "other": "Vergleich",
-        "diff": "Differenz"
+        "other": "Vergleichswert",
+        "diff": "Differenz",
+        "assignment": "Zuordnung"
       },
       "group": {
         "internal": "Börse intern",
@@ -472,6 +474,43 @@
         "net_of_fees": "nach Gebühren, vor Funding",
         "net": "netto (nach Gebühren und Funding)",
         "mixed": "gemischt"
+      },
+      "field": {
+        "fee": "Gebühr",
+        "realized": "Realisiert",
+        "funding": "Funding",
+        "pnl": "P/L",
+        "close_price": "Ausstiegspreis",
+        "status": "Status",
+        "wallet": "Kontostand"
+      },
+      "other_source": {
+        "fills": "Summe der Fills",
+        "journal": "Journal {journal}",
+        "trade_history": "Erklärt durch Trades, Gebühren, Funding"
+      },
+      "ref": {
+        "position": "Position {id}",
+        "entry": "Journal-Eintrag {id}",
+        "fills": "Fills: {ids}",
+        "opened": "eröffnet {time}",
+        "closed": "geschlossen {time}",
+        "period": "zwischen {from} und {to}",
+        "none": "—"
+      },
+      "cause": {
+        "fills_missing": "Zur geschlossenen Position sind keine Fills archiviert, daher ist keine Summenprüfung möglich. Meist fehlt der Trade-Export für diesen Zeitraum.",
+        "fill_fee_mismatch": "Die Gebühr der Position stimmt nicht mit der Summe der Gebühren ihrer Fills überein. Mögliche Ursachen: ein fehlender oder doppelt importierter Fill oder ein nachträglich korrigierter Export.",
+        "fill_pnl_mismatch": "Das realisierte Ergebnis der Position stimmt nicht mit der Summe ihrer Fills überein. Mögliche Ursache: ein fehlender Teilschließungs-Fill.",
+        "missing_in_journal": "Die Börse kennt diese Position, im Journal gibt es im selben Zeitraum keinen passenden Eintrag (gleicher Markt und gleiche Seite, Zeit ±2 min, Größe, Einstiegspreis).",
+        "missing_at_venue": "Das Journal enthält diesen Trade, die Börse hat keine passende Position. Möglich: manuell erfasster Trade, anderes Konto oder Unterkonto, oder es fehlt ein Börsen-Export.",
+        "ambiguous_match": "Mehrere Positionen bzw. Einträge passen fast gleich gut. Es wird nichts geraten – bitte von Hand zuordnen.",
+        "status_mismatch": "Auf einer Seite ist der Trade offen, auf der anderen geschlossen.",
+        "price_mismatch": "Der Ausstiegspreis weicht stärker als die Toleranz (0,05 %) ab.",
+        "fee_mismatch": "Die Gebühr im Journal weicht von der Gebühr der Börse ab (Toleranz 0,01 USDT bzw. 0,05 %).",
+        "funding_mismatch": "Das Funding im Journal weicht vom Funding der Börse ab. Häufige Ursache: Das Journal erfasst Funding nicht oder mit umgekehrtem Vorzeichen.",
+        "pnl_mismatch": "Das P/L im Journal weicht vom P/L der Börse ab. Beide Werte sind auf die Definition des Journals umgerechnet: {basis}.",
+        "unexplained_balance_change": "Der Kontostand hat sich zwischen zwei Beobachtungen anders verändert, als Trades, Gebühren und Funding erklären – z. B. durch Einzahlung, Auszahlung, Transfer oder Bonus."
       }
     },
     "sources": {
@@ -590,6 +629,11 @@
       "pnl_basis_doubtful": "Angegebene P/L-Definition passt nicht zu den Zeilen",
       "already_imported": "Datei war schon importiert",
       "issues_truncated": "Weitere Probleme nicht gespeichert"
-    }
+    },
+    "title_synthetic": "Trading (LIVE-Historie · Demodaten)",
+    "banner_synthetic": "DEMO – synthetische Testdaten aus dem simulierten Konto, keine echten Kontodaten. Getrennt vom Paper-Test und von deinem echten Konto; nur lesend.",
+    "banner_pending": "LIVE-Historie – nur lesend, getrennt vom Paper-Test. Die Herkunft des Archivs wird geladen …",
+    "subtitle_synthetic": "Nur-Lese-Ansicht synthetischer Demodaten aus dem lokalen LIVE-Archiv – nicht dein echtes Konto.",
+    "subtitle_pending": "Nur-Lese-Ansicht des lokalen LIVE-Archivs."
   }
 }

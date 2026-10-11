@@ -379,9 +379,11 @@ class LiveSource(BaseModel):
     last_sync_ms: int | None = None
     """End of the last successful API sync (``None`` = never)."""
     last_import_ms: int | None = None
+    origin: str = "unknown"
+    """real / synthetic / unknown — synthetic means generated demo data, never the account."""
     warnings: list[str] = Field(default_factory=list)
     """Codes: no_sync_yet, last_run_failed, last_run_partial, sync_old,
-    coverage_gaps, import_issues, records_truncated."""
+    coverage_gaps, import_issues, records_truncated, origin_unknown."""
 
 
 class LiveTotals(BaseModel):
@@ -532,15 +534,42 @@ class LiveCostsView(BaseModel):
 
 
 class LiveFinding(BaseModel):
+    """One difference, traceable to the records it is about.
+
+    ``venue_value`` is the exchange's figure (from ``venue_source``),
+    ``other_value`` the figure it was compared with (from ``other_source``),
+    ``difference`` = venue − other. The UI explains each ``code`` in words.
+    """
+
+    id: str
+    """Stable within one archive state: group, code and the records involved."""
     code: str
     """A ``reconcile.Code`` value."""
     severity: str
     """error / warning / info."""
     group: str
     """internal / journal / balance."""
+    field: str | None = None
+    """What was compared: fee / realized / funding / pnl / close_price / status / wallet."""
     position_id: str | None = None
     entry_id: str | None = None
     symbol: str | None = None
+    side: str | None = None
+    opened_ms: int | None = None
+    """Open time of the position (or of the journal entry when there is no position)."""
+    closed_ms: int | None = None
+    venue_source: str | None = None
+    """api / csv — where the archived exchange record came from."""
+    other_source: str
+    """fills / journal / trade_history — what the exchange figure was compared with."""
+    journal: str | None = None
+    basis: str | None = None
+    """For P/L: the definition both sides were aligned to (the journal's)."""
+    fill_ids: list[str] = Field(default_factory=list)
+    """For venue-internal findings: the fills that were summed."""
+    period_from_ms: int | None = None
+    """For balance findings: the two observations compared."""
+    period_to_ms: int | None = None
     venue_value: float | None = None
     other_value: float | None = None
     difference: float | None = None

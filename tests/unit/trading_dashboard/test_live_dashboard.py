@@ -105,7 +105,7 @@ def test_the_paper_reader_rejects_the_live_archive(demo: DemoArchive) -> None:
 
 def test_a_writer_holding_the_lock_gives_busy_not_a_hang(tmp_path: Path) -> None:
     path = tmp_path / "live.sqlite"
-    LiveArchive.open(path, now_ms=1).close()
+    LiveArchive.open(path, now_ms=1, origin="synthetic").close()
     writer = sqlite3.connect(path, isolation_level=None)
     writer.execute("BEGIN EXCLUSIVE")
     try:
@@ -133,7 +133,7 @@ def test_a_sync_is_not_blocked_by_readers(demo: DemoArchive, tmp_path: Path) -> 
     t = threading.Thread(target=read_loop)
     t.start()
     try:
-        archive = LiveArchive.open(copy, now_ms=demo.now_ms)
+        archive = LiveArchive.open(copy, now_ms=demo.now_ms, origin="synthetic")
         started = time.monotonic()
         for i in range(20):
             with archive.batch():
@@ -253,7 +253,7 @@ def test_source_warnings(demo: DemoArchive, tmp_path: Path) -> None:
     later = lv.context(LiveArchiveReader(demo.path).read(), demo.now_ms + 30 * lv.DAY_MS)
     assert lv.source(later).warnings == ["sync_old"]
     fresh = tmp_path / "fresh.sqlite"
-    LiveArchive.open(fresh, now_ms=1).close()
+    LiveArchive.open(fresh, now_ms=1, origin="synthetic").close()
     empty = lv.context(LiveArchiveReader(fresh).read(), demo.now_ms)
     assert lv.source(empty).warnings == ["no_sync_yet"]
     o = lv.overview(empty)
@@ -271,7 +271,7 @@ def test_a_failed_read_gives_empty_sections(tmp_path: Path) -> None:
 def test_backfilled_old_positions_do_not_explain_a_balance_change(tmp_path: Path) -> None:
     """A position imported between two observations but closed before both moved nothing."""
     demo = build_demo_archive(tmp_path)
-    archive = LiveArchive.open(demo.path, now_ms=demo.now_ms)
+    archive = LiveArchive.open(demo.path, now_ms=demo.now_ms, origin="synthetic")
     old = Position(
         venue="primary",
         account="main",
@@ -371,3 +371,57 @@ def test_the_live_setter_writes_only_its_key(tmp_path: Path) -> None:
     default.memory.data_dir = str(tmp_path)
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=default)))
     assert live_archive_path(request) == tmp_path / "trading" / "live_history.sqlite"  # type: ignore[arg-type]
+
+
+# ------------------------------------------------------- traceability, origin
+
+
+def test_every_finding_is_traceable(demo: DemoArchive) -> None:
+    ctx = _ctx(demo)
+    snap = ctx.snap
+    assert isinstance(snap, LiveSnapshot)
+    r = lv.reconciliation(ctx)
+    assert len({f.id for f in r.findings}) == len(r.findings)
+    by_code = {f.code: f for f in r.findings}
+
+    internal = by_code["fill_fee_mismatch"]
+    own = sorted(x.trade_id for x in snap.fills if x.position_id == internal.position_id)
+    assert internal.fill_ids == own and len(own) >= 2
+    assert (internal.field, internal.other_source, internal.venue_source) == ("fee", "fills", "csv")
+    assert internal.opened_ms is not None and internal.closed_ms is not None
+    assert internal.difference == pytest.approx(-0.40)
+
+    pnl = by_code["pnl_mismatch"]
+    assert (pnl.field, pnl.other_source, pnl.journal, pnl.basis) == (
+        "pnl",
+        "journal",
+        "control",
+        "net",
+    )
+    assert pnl.position_id and pnl.entry_id and pnl.side in ("long", "short")
+    assert pnl.venue_source == "api"
+
+    extra = by_code["missing_at_venue"]
+    assert extra.position_id is None and extra.entry_id == "J-9999"
+    assert extra.opened_ms is not None and extra.side == "short"  # from the journal entry
+
+    balance = by_code["unexplained_balance_change"]
+    assert (balance.field, balance.other_source) == ("wallet", "trade_history")
+    assert (balance.period_from_ms, balance.period_to_ms) == (
+        snap.balances[1].ts_ms,
+        snap.balances[2].ts_ms,
+    )
+
+
+def test_the_archive_origin_reaches_the_dashboard(demo: DemoArchive, tmp_path: Path) -> None:
+    assert lv.source(_ctx(demo)).origin == "synthetic"
+    real = tmp_path / "real.sqlite"
+    LiveArchive.open(real, now_ms=1, origin="real").close()
+    src = lv.source(lv.context(LiveArchiveReader(real).read(), demo.now_ms))
+    assert src.origin == "real" and "origin_unknown" not in src.warnings
+    unlabelled = tmp_path / "old.sqlite"
+    LiveArchive.open(unlabelled, now_ms=1, origin="real").close()
+    with sqlite3.connect(unlabelled) as c:
+        c.execute("DELETE FROM lh_meta WHERE key = 'origin'")
+    src = lv.source(lv.context(LiveArchiveReader(unlabelled).read(), demo.now_ms))
+    assert src.origin == "unknown" and "origin_unknown" in src.warnings

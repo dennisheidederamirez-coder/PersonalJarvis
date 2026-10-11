@@ -84,6 +84,14 @@ export function TradingDeskView() {
   const reports = useTradingReports(paper && tab === "reports");
   const live = useLiveOverview(!paper);
   const liveSource = live.data?.source;
+  // The subtitle never calls generated demo data "the real account".
+  const liveOrigin = liveSource?.state === "ok" ? liveSource.origin : "unknown";
+  const liveSubtitle =
+    liveOrigin === "synthetic"
+      ? t("live.subtitle_synthetic")
+      : liveOrigin === "real"
+        ? t("live.subtitle")
+        : t("live.subtitle_pending");
 
   const source: TradingSource | undefined = overview.data?.source;
   // "3 hours ago" is measured from the moment the server read the journal, so
@@ -121,15 +129,25 @@ export function TradingDeskView() {
     <ScrollArea className="h-full">
       <div className="flex w-full flex-col gap-4 px-8 py-6" data-testid="trading-desk">
         <PanelHeader
-          title={paper ? t("title") : t("live.title")}
+          // On a narrow pane the switches wrap under the title instead of squeezing it.
+          className="flex-wrap [&>div:first-child]:grow [&>div:first-child]:basis-72"
+          title={
+            paper
+              ? t("title")
+              : liveSource?.state === "ok" && liveSource.origin === "synthetic"
+                ? t("live.title_synthetic")
+                : t("live.title")
+          }
           subtitle={
             paper
               ? source?.journal_mtime_ms
                 ? `${t("subtitle")} ${t("updated", { time: dateTime(locale, source.journal_mtime_ms) })}`
                 : t("subtitle")
-              : liveSource?.archive_mtime_ms
-                ? `${t("live.subtitle")} ${t("live.updated", { time: dateTime(locale, liveSource.archive_mtime_ms) })}`
-                : t("live.subtitle")
+              : `${liveSubtitle}${
+                  liveSource?.archive_mtime_ms
+                    ? ` ${t("live.updated", { time: dateTime(locale, liveSource.archive_mtime_ms) })}`
+                    : ""
+                }`
           }
           actions={
             <>
@@ -182,7 +200,7 @@ export function TradingDeskView() {
             {source ? <WarningList source={source} t={t} /> : null}
 
             <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-              <TabsList className="flex-wrap justify-start">
+              <TabsList className="h-auto flex-wrap justify-start">
                 {TABS.map((id) => (
                   <TabsTrigger key={id} value={id} data-testid={`trading-tab-${id}`}>
                     {t(`tabs.${id}`)}

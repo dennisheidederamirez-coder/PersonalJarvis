@@ -5,7 +5,6 @@ import {
   type Column,
   StatGroup,
   StatTile,
-  Table,
   TableHead,
   TableRow,
 } from "@/components/extensions/primitives";
@@ -14,6 +13,7 @@ import type { TradingLiveCostRow, TradingLiveCostsView } from "@/types/trading";
 import { Empty, Section } from "../parts";
 import { coin, pct, toneClass, utcPeriod } from "../tradingFormat";
 import type { TradingT } from "../tradingI18n";
+import { ScrollTable } from "./liveParts";
 
 export function LiveCostsTab({
   data,
@@ -33,15 +33,15 @@ export function LiveCostsTab({
     const columns: Column[] = [
       { id: "key", label: keyLabel, width: "minmax(100px, 1fr)" },
       { id: "n", label: t("live.costs.positions"), align: "right", width: "90px" },
-      { id: "realized", label: t("live.costs.realized"), align: "right" },
-      { id: "fees", label: t("live.costs.fees"), align: "right" },
-      { id: "paid", label: t("live.costs.funding_paid"), align: "right" },
-      { id: "received", label: t("live.costs.funding_received"), align: "right" },
-      { id: "net", label: t("live.costs.net"), align: "right" },
+      { id: "realized", label: t("live.costs.realized"), align: "right", width: "minmax(112px, 1fr)" },
+      { id: "fees", label: t("live.costs.fees"), align: "right", width: "minmax(96px, 1fr)" },
+      { id: "paid", label: t("live.costs.funding_paid"), align: "right", width: "minmax(112px, 1fr)" },
+      { id: "received", label: t("live.costs.funding_received"), align: "right", width: "minmax(112px, 1fr)" },
+      { id: "net", label: t("live.costs.net"), align: "right", width: "minmax(112px, 1fr)" },
       { id: "share", label: t("live.costs.fee_share"), align: "right", width: "110px" },
     ];
     return (
-      <Table label={keyLabel}>
+      <ScrollTable label={keyLabel} minWidth={1020}>
         <TableHead columns={columns} />
         {rows.map((r) => (
           <TableRow key={r.key} columns={columns}>
@@ -69,13 +69,14 @@ export function LiveCostsTab({
             </Cell>
           </TableRow>
         ))}
-      </Table>
+      </ScrollTable>
     );
   }
 
   return (
     <div className="flex flex-col gap-6" data-testid="live-costs">
-      <StatGroup>
+      {/* one tile per row on a phone, so no amount is cut off */}
+      <StatGroup className="max-sm:grid-cols-1 max-sm:[&>*]:border-l-0 max-sm:[&>*:nth-child(n+2)]:border-t">
         <StatTile
           cell
           icon={<Coins className="h-4 w-4" />}

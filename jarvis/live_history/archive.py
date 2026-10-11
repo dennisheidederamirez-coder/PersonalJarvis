@@ -15,6 +15,10 @@ What it guarantees:
   each row it could not use is an issue (line, code, field — never the
   cell's content). Entries of an external journal live in their own table,
   keyed per journal, and are never mixed with the venue's records.
+- **Real and synthetic never mix.** ``lh_meta.origin`` (``real`` or
+  ``synthetic``) is fixed at creation; opening the archive for the other
+  origin is refused, and the dashboard labels a synthetic archive as demo
+  data.
 - **LIVE only.** ``lh_meta.mode`` is ``live`` from creation on, opening a file
   that holds a paper journal (``trading_journal``) is refused, and the paper
   dashboard's reader rejects this file in turn.
@@ -145,6 +149,13 @@ class ArchiveError(RuntimeError):
     """The file is not a LIVE archive this code can use."""
 
 
+class Origin(StrEnum):
+    """Where an archive's data comes from; fixed when the archive is created."""
+
+    REAL = "real"  # the owner's real account (API or its own exports)
+    SYNTHETIC = "synthetic"  # the simulated venue and generated sample files
+
+
 class Outcome(StrEnum):
     INSERTED = "inserted"
     UPDATED = "updated"
@@ -196,19 +207,24 @@ class LiveArchive:
     # ------------------------------------------------------------------ opening
 
     @classmethod
-    def open(cls, path: Path, *, now_ms: int) -> LiveArchive:
-        """Open or create the archive at ``path``; refuses a paper journal."""
+    def open(cls, path: Path, *, now_ms: int, origin: Origin | str) -> LiveArchive:
+        """Open or create the archive at ``path`` for data of ``origin``.
+
+        Refuses a paper journal, and an archive that holds data of the other
+        origin: synthetic test data and the real account never share a file.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(path, timeout=5, isolation_level=None)
-        return cls._init(conn, str(path), now_ms)
+        return cls._init(conn, str(path), now_ms, Origin(origin))
 
     @classmethod
-    def in_memory(cls, *, now_ms: int) -> LiveArchive:
+    def in_memory(cls, *, now_ms: int, origin: Origin | str) -> LiveArchive:
         """A throwaway archive (a dry run against no archive yet)."""
-        return cls._init(sqlite3.connect(":memory:", isolation_level=None), ":memory:", now_ms)
+        conn = sqlite3.connect(":memory:", isolation_level=None)
+        return cls._init(conn, ":memory:", now_ms, Origin(origin))
 
     @classmethod
-    def _init(cls, conn: sqlite3.Connection, path: str, now_ms: int) -> LiveArchive:
+    def _init(cls, conn: sqlite3.Connection, path: str, now_ms: int, origin: Origin) -> LiveArchive:
         try:
             conn.execute("PRAGMA busy_timeout = 5000")
             tables = {
@@ -227,12 +243,19 @@ class LiveArchive:
                         ("mode", MODE),
                         ("schema_version", str(SCHEMA_VERSION)),
                         ("created_ms", str(now_ms)),
+                        ("origin", origin.value),
                     ],
                 )
             elif meta.get("mode") != MODE:
                 raise ArchiveError(f"archive mode is {meta.get('mode')!r}, expected {MODE!r}")
             elif int(meta.get("schema_version", "0")) > SCHEMA_VERSION:
                 raise ArchiveError("archive was written by a newer version")
+            elif meta.get("origin") is None:
+                raise ArchiveError("archive has no origin label; rebuild it")
+            elif meta["origin"] != origin.value:
+                raise ArchiveError(
+                    f"archive holds {meta['origin']} data; refusing to add {origin.value} data"
+                )
         except BaseException:
             conn.close()
             raise
@@ -243,6 +266,10 @@ class LiveArchive:
 
     def meta(self) -> dict[str, str]:
         return dict(self._conn.execute("SELECT key, value FROM lh_meta").fetchall())
+
+    @property
+    def origin(self) -> Origin:
+        return Origin(self.meta()["origin"])
 
     # ------------------------------------------------------------- transactions
 
@@ -549,6 +576,25 @@ def journal_from_data(data: dict[str, Any]) -> JournalEntry:
     return JournalEntry(**kwargs)
 
 
+def stored_origin(path: Path) -> Origin | None:
+    """The origin label of the archive at ``path`` (read-only), or ``None``."""
+    if not path.is_file():
+        return None
+    uri = f"{path.resolve().as_uri()}?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True, timeout=5)
+        try:
+            row = conn.execute("SELECT value FROM lh_meta WHERE key = 'origin'").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError:  # not an archive at all: the caller reports it
+        return None
+    try:
+        return Origin(row[0]) if row else None
+    except ValueError:  # an unknown label is no label
+        return None
+
+
 def gaps(covered: list[tuple[int, int]], lo: int, hi: int) -> list[tuple[int, int]]:
     """The parts of ``[lo, hi)`` that ``covered`` (merged, sorted) leaves open."""
     out: list[tuple[int, int]] = []
@@ -574,6 +620,7 @@ def describe(archive: LiveArchive, *, venue: str, account: str) -> dict[str, Any
     """A small status summary (the CLI's ``status``)."""
     return {
         "mode": archive.meta().get("mode"),
+        "origin": archive.meta().get("origin"),
         "counts": {e.value: archive.count(e, venue=venue, account=account) for e in Entity},
         "runs": [r.__dict__ for r in archive.runs(venue=venue, account=account, limit=5)],
     }
@@ -584,12 +631,14 @@ __all__ = [
     "SCHEMA_VERSION",
     "ArchiveError",
     "LiveArchive",
+    "Origin",
     "Outcome",
     "Revision",
     "RunStatus",
     "SyncRun",
     "describe",
     "gaps",
+    "stored_origin",
     "journal_from_data",
     "journal_to_data",
 ]

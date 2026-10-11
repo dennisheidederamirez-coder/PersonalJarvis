@@ -121,8 +121,12 @@ def test_every_live_code_has_a_label_in_both_languages() -> None:
     from jarvis.live_history.reconcile import Code, PnlBasis, Severity
     from jarvis.live_history.sync import Stream
     from jarvis.live_history.venue_rest import ErrorKind
+    from jarvis.trading_dashboard import live_views
 
     needed = {f"live.recon.code.{c.value}" for c in Code}
+    needed |= {f"live.recon.cause.{c.value}" for c in Code}
+    needed |= {f"live.recon.field.{f}" for f in set(live_views._FIELD.values())}
+    needed |= {f"live.recon.other_source.{o}" for o in set(live_views._OTHER.values())}
     needed |= {f"live.recon.severity.{s.value}" for s in Severity}
     needed |= {f"live.recon.basis_name.{b.value}" for b in PnlBasis} | {
         "live.recon.basis_name.mixed"
@@ -150,6 +154,7 @@ def test_every_live_code_has_a_label_in_both_languages() -> None:
             "coverage_gaps",
             "import_issues",
             "records_truncated",
+            "origin_unknown",
         )
     }
     needed |= {f"live.source.{s}" for s in ("missing", "busy", "invalid", "error")}

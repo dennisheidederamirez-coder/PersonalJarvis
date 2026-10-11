@@ -4,7 +4,6 @@ import {
   type Column,
   FactRows,
   Panel,
-  Table,
   TableHead,
   TableRow,
 } from "@/components/extensions/primitives";
@@ -12,6 +11,7 @@ import type { TradingLiveRun, TradingLiveSourcesView } from "@/types/trading";
 import { Dot, Empty, Section } from "../parts";
 import { dateTime } from "../tradingFormat";
 import { hasKey, type TradingLanguage, type TradingT } from "../tradingI18n";
+import { ScrollTable } from "./liveParts";
 
 const STATUS_TONE = { ok: "ok", partial: "warn", failed: "error", running: "busy" } as const;
 
@@ -174,7 +174,7 @@ export function LiveSourcesTab({
         {data.runs.length === 0 ? (
           <Empty>{t("live.sources.runs_none")}</Empty>
         ) : (
-          <Table label={t("live.sources.runs")}>
+          <ScrollTable label={t("live.sources.runs")} minWidth={940}>
             <TableHead columns={runColumns} />
             {data.runs.map((r) => (
               <TableRow key={r.id} columns={runColumns}>
@@ -200,7 +200,7 @@ export function LiveSourcesTab({
                 <Cell muted>{r.error_code ? errorLabel(r.error_code) : "—"}</Cell>
               </TableRow>
             ))}
-          </Table>
+          </ScrollTable>
         )}
       </Section>
     </div>

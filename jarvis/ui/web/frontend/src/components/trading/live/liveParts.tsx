@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { Table } from "@/components/extensions/primitives";
 import { cn } from "@/lib/utils";
 import type { TradingLiveSource } from "@/types/trading";
 import type { TradingT } from "../tradingI18n";
@@ -180,6 +181,33 @@ export function LiveLineChart({
           />
         </LineChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+/**
+ * A table that keeps its columns readable on a narrow pane: below `minWidth`
+ * it scrolls sideways inside its own frame instead of squeezing every column
+ * until the numbers truncate. The page itself never scrolls sideways.
+ */
+export function ScrollTable({
+  label,
+  minWidth,
+  children,
+}: {
+  label: string;
+  minWidth: number;
+  children: ReactNode;
+}) {
+  return (
+    // Amounts never break inside the frame: "+5,2128 USDT" stays on one line.
+    <div
+      className="-mx-1 overflow-x-auto px-1 [&_.tabular-nums]:whitespace-nowrap"
+      data-testid="live-scroll-table"
+    >
+      <Table label={label} className="w-full">
+        <div style={{ minWidth }}>{children}</div>
+      </Table>
     </div>
   );
 }

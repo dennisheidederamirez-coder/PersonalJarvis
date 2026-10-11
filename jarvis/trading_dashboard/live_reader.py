@@ -46,6 +46,9 @@ MAX_RUNS: Final = 200
 MAX_IMPORT_RUNS: Final = 20
 _RETRIES: Final = 3
 
+#: ``lh_meta.origin`` values the dashboard knows; anything else is "unknown".
+_ORIGINS: Final = {"real": "real", "synthetic": "synthetic"}
+
 DEFAULT_VENUE: Final = "primary"
 DEFAULT_ACCOUNT: Final = "main"
 
@@ -59,6 +62,7 @@ class LiveSnapshot:
     venue: str
     account: str
     created_ms: int | None
+    origin: str  # real / synthetic / unknown (``lh_meta.origin``)
     positions: tuple[Position, ...]
     fills: tuple[Fill, ...]
     balances: tuple[Balance, ...]
@@ -213,6 +217,7 @@ class LiveArchiveReader:
             venue=v,
             account=a,
             created_ms=int(created) if created and created.isdigit() else None,
+            origin=_ORIGINS.get(meta.get("origin", ""), "unknown"),
             positions=positions,
             fills=fills,
             balances=balances,

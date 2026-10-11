@@ -161,10 +161,54 @@ describe("TradingDeskView — LIVE history", () => {
   it("opens on PAPER and switches to a separately labelled LIVE view", async () => {
     await openLive();
     expect(screen.queryByTestId("trading-paper-banner")).toBeNull();
-    expect(screen.getByTestId("trading-live-banner").textContent).toContain("echte Kontodaten"); // i18n-allow: asserts the German default UI text
-    expect(screen.getByText("Trading (LIVE-Historie)")).toBeTruthy();
     expect(await screen.findByTestId("live-overview")).toBeTruthy();
     expect(screen.queryByText("14-Tage-Paper-Test")).toBeNull();
+  });
+
+  it("labels a synthetic archive as demo data, never as the real account", async () => {
+    await openLive();
+    await screen.findByTestId("live-overview");
+    const banner = screen.getByTestId("trading-live-banner");
+    expect(banner.getAttribute("data-origin")).toBe("synthetic");
+    expect(banner.textContent).toContain("synthetische Testdaten"); // i18n-allow: asserts the German default UI text
+    expect(banner.textContent).not.toContain("echte Kontodaten"); // i18n-allow: asserts the German default UI text
+    expect(screen.getByText("Trading (LIVE-Historie · Demodaten)")).toBeTruthy();
+    expect(screen.getByText(/synthetischer Demodaten/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    expect(screen.queryByText(/des echten Kontos/)).toBeNull();
+  });
+
+  it("labels a real archive as real account data", async () => {
+    stubFetch({
+      ...RESPONSES,
+      ...LIVE_RESPONSES,
+      "live/overview": { ...liveOverview, source: { ...liveOverview.source, origin: "real" } },
+    });
+    await openLive();
+    await screen.findByTestId("live-overview");
+    const banner = screen.getByTestId("trading-live-banner");
+    expect(banner.getAttribute("data-origin")).toBe("real");
+    expect(banner.textContent).toContain("echte Kontodaten"); // i18n-allow: asserts the German default UI text
+    expect(screen.getByText("Trading (LIVE-Historie)")).toBeTruthy();
+  });
+
+  it("ties every difference to its records, sources and cause", async () => {
+    await openLive();
+    fireEvent.mouseDown(screen.getByTestId("live-tab-reconciliation"));
+    const tab = await screen.findByTestId("live-reconciliation");
+    const rows = within(tab).getAllByTestId("live-finding");
+    expect(rows.length).toBe(7);
+    // internal: the position and the fills that were summed, compared with their sum
+    expect(within(tab).getByText(/Fills: T\d+/)).toBeTruthy();
+    expect(within(tab).getByText("Summe der Fills")).toBeTruthy();
+    // journal: position ↔ entry, the journal named as the other source
+    expect(within(tab).getAllByText(/^Position P\d+$/).length).toBeGreaterThan(3);
+    expect(within(tab).getAllByText(/^Journal-Eintrag J-\d+$/).length).toBeGreaterThan(2); // i18n-allow: asserts the German default UI text
+    expect(within(tab).getAllByText("Journal control").length).toBeGreaterThan(2);
+    // the P/L cause names the definition both sides were aligned to
+    expect(within(tab).getByText(/Definition des Journals umgerechnet: netto/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    // balance: the two observations
+    expect(within(tab).getByText(/^zwischen .+ und .+$/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    expect(within(tab).getByTestId("live-scroll-table")).toBeTruthy();
   });
 
   it("reads only LIVE routes once in LIVE mode, and only with GET", async () => {

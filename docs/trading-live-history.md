@@ -35,6 +35,7 @@ exchange the *primary venue* (`venue = "primary"`).
 | `reconcile.py` | Venue-internal checks, journal matching and comparison, balance check |
 | `simulated_venue.py` | The simulated venue: documented endpoints over synthetic, deterministic data |
 | `csv_import.py` | Import of the venue's position/trade exports and an external journal's export |
+| `inspect_export.py` | A real export's format (headers, counts, shares, issue codes) without its contents |
 | `__main__.py` | `python -m jarvis.live_history sync --simulated` · `import` · `status` · `plan-backfill` |
 
 The package imports neither `jarvis.trading` nor `jarvis.market_data` (the
@@ -44,6 +45,16 @@ paper job pins their source by hash) nor any model SDK; a test enforces it.
 
 One SQLite file, tagged `lh_meta.mode = live` at creation. It refuses to open
 a paper journal, and the paper dashboard's reader rejects it (`invalid`).
+
+**Real and synthetic data never share a file.** `lh_meta.origin` is fixed at
+creation: `real` (the owner's account, through the API or its own exports)
+or `synthetic` (the simulated venue and generated sample files). Opening an
+archive for the other origin is refused; an archive without the label is
+refused for writing and shown with a warning. The simulated venue can only
+fill a `synthetic` archive (`SyncService` checks it), `sync --simulated`
+always opens one, and `import` needs `--origin real|synthetic`. The
+dashboard labels a synthetic archive as demo data everywhere (title,
+subtitle, banner) and never calls it the real account.
 
 | Table | Holds |
 |---|---|
@@ -147,6 +158,49 @@ run with the reason. `--covers FROM TO` records coverage for the stream only
 when the import was clean, so the backfill plan stops listing that span.
 `--dry-run` reports the same result and writes nothing.
 
+## Checking the real export formats (before the first real import)
+
+The exchange's and the external journal's real export formats are not known
+yet. `inspect` answers what the importer needs to know without revealing
+the contents:
+
+```
+python -m jarvis.live_history inspect --file EXPORT.csv --kind positions|fills|journal \
+    [--tz Europe/Berlin] [--pnl-basis …] [--map field=Header ...] [--decimal comma|point]
+```
+
+It prints JSON with: size, a 12-digit checksum prefix, encoding, delimiter,
+decimal mark, the header names, the column mapping (or why it failed), the
+unmapped headers, per mapped column only counts (empty / number / text,
+time format class such as `epoch_ms` or `no_zone`, and for fee, funding and
+P/L the number of negative, zero and positive values), and a trial import
+into a discarded in-memory archive: status, how many rows it would insert
+or reject, the P/L definition it recognised, issue codes with line numbers,
+and hints (`map_columns`, `declare_timezone`, `declare_pnl_basis`,
+`check_decimal_mark`, `restrict_permissions`). No value, id, symbol or
+timestamp appears; nothing is written; a header that looks unusual is shown
+as `<withheld>`.
+
+Safe procedure for the owner:
+
+1. Download the exports from the exchange (position history, trade history)
+   and, if it offers one, from the journal. If a file is `.xlsx`, save it as
+   CSV in the spreadsheet program.
+2. Keep them in a folder **outside** the repository and readable only by
+   you (`chmod 600 <file>`). `inspect` and a real `import` refuse a file
+   inside a git working tree.
+3. Run `inspect` once per file and share only its JSON output. It contains
+   no account data; check it before sharing all the same.
+4. From that output the column mapping, time zone, decimal mark and P/L
+   definition are fixed, and the aliases are extended where needed — with
+   synthetic samples in the tests, never the real files.
+5. The first real `import --origin real` goes into a new archive outside the
+   repository, as a `--dry-run` first.
+
+Screenshots and logs are never made from real data: the preview harness
+uses the synthetic demo archive only, and the importer stores issue codes,
+line numbers and field names — never a cell.
+
 ## Reconciliation
 
 All findings have a stable code (`reconcile.Code`) for later translation:
@@ -166,8 +220,22 @@ All findings have a stable code (`reconcile.Code`) for later translation:
 - **Balance:** the wallet change between two observations must equal the
   change of `realized − fee + funding` over all positions in between;
   a remainder is `unexplained_balance_change` (deposit, transfer, bonus …).
+  A position archived later (a CSV backfill) but closed before the earlier
+  observation is not counted as explaining the change.
+
+In the dashboard every finding is traceable: a stable id; the position, the
+journal entry, the summed fills or the two balance observations it is
+about, with symbol, side and open/close times; what was compared (fee,
+funding, P/L …); the exchange's value and where its record came from (API
+or CSV); the compared value and its source (sum of fills, journal, trade
+history); the difference; for P/L the definition both sides were aligned
+to; and the likely cause in words (German and English).
 
 ## Tests
+
+`tests/unit/live_history/test_inspect_export.py` — no cell content in the
+report, nothing written, files inside a git tree refused, unknown columns
+reported, `--origin` mandatory, real imports refused inside the repository.
 
 `tests/unit/live_history/test_csv_import.py` — number and time parsing,
 column aliases and mapping, export vs API equality, the API-is-primary rule,

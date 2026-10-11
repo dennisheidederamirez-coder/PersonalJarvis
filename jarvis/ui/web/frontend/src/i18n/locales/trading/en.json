@@ -326,7 +326,8 @@
       "last_run_partial": "The last run was incomplete (see “Data & imports”).",
       "coverage_gaps": "The archive misses periods the API could still serve (see “Data & imports”).",
       "import_issues": "The last CSV import had problems (see “Data & imports”).",
-      "records_truncated": "The archive is very large; only the newest entries are shown."
+      "records_truncated": "The archive is very large; only the newest entries are shown.",
+      "origin_unknown": "This archive's origin is not labelled (real or synthetic). Read its numbers with care."
     },
     "overview": {
       "wallet": "Balance",
@@ -436,12 +437,13 @@
       "col": {
         "severity": "Level",
         "check": "Check",
-        "finding": "Finding",
+        "finding": "Finding and cause",
         "market": "Market",
         "ids": "Position / entry",
         "venue": "Exchange",
-        "other": "Compared",
-        "diff": "Difference"
+        "other": "Compared value",
+        "diff": "Difference",
+        "assignment": "Assigned to"
       },
       "group": {
         "internal": "Exchange internal",
@@ -472,6 +474,43 @@
         "net_of_fees": "after fees, before funding",
         "net": "net (after fees and funding)",
         "mixed": "mixed"
+      },
+      "field": {
+        "fee": "Fee",
+        "realized": "Realized",
+        "funding": "Funding",
+        "pnl": "P/L",
+        "close_price": "Exit price",
+        "status": "Status",
+        "wallet": "Balance"
+      },
+      "other_source": {
+        "fills": "Sum of the fills",
+        "journal": "Journal {journal}",
+        "trade_history": "Explained by trades, fees, funding"
+      },
+      "ref": {
+        "position": "Position {id}",
+        "entry": "Journal entry {id}",
+        "fills": "Fills: {ids}",
+        "opened": "opened {time}",
+        "closed": "closed {time}",
+        "period": "between {from} and {to}",
+        "none": "—"
+      },
+      "cause": {
+        "fills_missing": "No fills are archived for this closed position, so its sums cannot be checked. Usually the trade export for this period is missing.",
+        "fill_fee_mismatch": "The position's fee does not equal the sum of its fills' fees. Possible causes: a missing or twice-imported fill, or an export that was corrected later.",
+        "fill_pnl_mismatch": "The position's realized result does not equal the sum of its fills. Possible cause: a missing partial-close fill.",
+        "missing_in_journal": "The exchange has this position, but the journal has no matching entry in the same period (same market and side, time ±2 min, size, entry price).",
+        "missing_at_venue": "The journal has this trade, but the exchange has no matching position. Possibly a manually entered trade, another account or sub-account, or a missing exchange export.",
+        "ambiguous_match": "Several positions or entries match almost equally well. Nothing is guessed – please assign by hand.",
+        "status_mismatch": "The trade is open on one side and closed on the other.",
+        "price_mismatch": "The exit price differs by more than the tolerance (0.05 %).",
+        "fee_mismatch": "The journal's fee differs from the exchange's fee (tolerance 0.01 USDT or 0.05 %).",
+        "funding_mismatch": "The journal's funding differs from the exchange's. Common cause: the journal does not record funding, or records it with the opposite sign.",
+        "pnl_mismatch": "The journal's P/L differs from the exchange's. Both values are converted to the journal's definition: {basis}.",
+        "unexplained_balance_change": "Between two observations the balance changed by more than trades, fees and funding explain – e.g. a deposit, withdrawal, transfer or bonus."
       }
     },
     "sources": {
@@ -590,6 +629,11 @@
       "pnl_basis_doubtful": "Stated P/L definition does not fit the rows",
       "already_imported": "File was imported before",
       "issues_truncated": "Further issues not stored"
-    }
+    },
+    "title_synthetic": "Trading (LIVE history · demo data)",
+    "banner_synthetic": "DEMO – synthetic test data from the simulated account, not real account data. Separate from the paper test and from your real account; read-only.",
+    "banner_pending": "LIVE history – read-only, separate from the paper test. Loading where the archive comes from …",
+    "subtitle_synthetic": "Read-only view of synthetic demo data from the local LIVE archive – not your real account.",
+    "subtitle_pending": "Read-only view of the local LIVE archive."
   }
 }

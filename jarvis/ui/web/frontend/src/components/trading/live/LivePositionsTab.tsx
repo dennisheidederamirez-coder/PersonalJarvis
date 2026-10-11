@@ -4,7 +4,6 @@ import {
   Cell,
   type Column,
   SegmentedFilter,
-  Table,
   TableHead,
   TableRow,
 } from "@/components/extensions/primitives";
@@ -14,7 +13,7 @@ import type { TradingLivePosition } from "@/types/trading";
 import { Empty, Section, SideBadge } from "../parts";
 import { coin, dateTime, price, qty, toneClass } from "../tradingFormat";
 import type { TradingT } from "../tradingI18n";
-import { LiveSourceNotice, OriginTag } from "./liveParts";
+import { LiveSourceNotice, OriginTag, ScrollTable } from "./liveParts";
 
 const PAGE = 50;
 
@@ -28,20 +27,20 @@ export function LivePositionsTab({ locale, t }: { locale: string; t: TradingT })
   const columns: Column[] = [
     { id: "symbol", label: t("strategy.market"), width: "minmax(90px, 0.8fr)" },
     { id: "side", label: t("live.positions.side"), width: "70px" },
-    { id: "qty", label: t("live.positions.qty"), align: "right" },
-    { id: "entry", label: t("live.positions.entry"), align: "right" },
-    { id: "close", label: t("live.positions.close"), align: "right" },
-    { id: "realized", label: t("live.positions.realized"), align: "right" },
-    { id: "fee", label: t("live.positions.fee"), align: "right" },
-    { id: "funding", label: t("live.positions.funding"), align: "right" },
-    { id: "net", label: t("live.positions.net"), align: "right" },
+    { id: "qty", label: t("live.positions.qty"), align: "right", width: "minmax(72px, 1fr)" },
+    { id: "entry", label: t("live.positions.entry"), align: "right", width: "minmax(80px, 1fr)" },
+    { id: "close", label: t("live.positions.close"), align: "right", width: "minmax(80px, 1fr)" },
+    { id: "realized", label: t("live.positions.realized"), align: "right", width: "minmax(112px, 1fr)" },
+    { id: "fee", label: t("live.positions.fee"), align: "right", width: "minmax(96px, 1fr)" },
+    { id: "funding", label: t("live.positions.funding"), align: "right", width: "minmax(112px, 1fr)" },
+    { id: "net", label: t("live.positions.net"), align: "right", width: "minmax(112px, 1fr)" },
     { id: "time", label: t("live.positions.closed_at"), width: "minmax(100px, 0.8fr)" },
     { id: "origin", label: t("live.positions.origin"), width: "60px" },
     { id: "findings", label: t("live.positions.findings"), width: "minmax(140px, 1.2fr)" },
   ];
   const openColumns: Column[] = [
     ...columns.slice(0, 4),
-    { id: "unrealized", label: t("live.positions.unrealized"), align: "right" },
+    { id: "unrealized", label: t("live.positions.unrealized"), align: "right", width: "minmax(112px, 1fr)" },
     ...columns.slice(6, 8),
     { id: "time", label: t("live.positions.opened"), width: "minmax(100px, 0.8fr)" },
     columns[10],
@@ -132,10 +131,10 @@ export function LivePositionsTab({ locale, t }: { locale: string; t: TradingT })
         {data.open.length === 0 ? (
           <Empty>{t("live.positions.open_none")}</Empty>
         ) : (
-          <Table label={t("live.positions.open_title")}>
+          <ScrollTable label={t("live.positions.open_title")} minWidth={980}>
             <TableHead columns={openColumns} />
             {data.open.map((p) => row(p, true))}
-          </Table>
+          </ScrollTable>
         )}
       </Section>
 
@@ -150,10 +149,10 @@ export function LivePositionsTab({ locale, t }: { locale: string; t: TradingT })
         {data.closed.length === 0 ? (
           <Empty>{t("live.positions.closed_none")}</Empty>
         ) : (
-          <Table label={t("live.positions.closed_title")}>
+          <ScrollTable label={t("live.positions.closed_title")} minWidth={1370}>
             <TableHead columns={columns} />
             {data.closed.map((p) => row(p, false))}
-          </Table>
+          </ScrollTable>
         )}
         {data.closed.length < data.total_closed ? (
           <div className="flex justify-center">

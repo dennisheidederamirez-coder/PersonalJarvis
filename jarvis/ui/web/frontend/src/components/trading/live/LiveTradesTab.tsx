@@ -4,7 +4,6 @@ import {
   Cell,
   type Column,
   SegmentedFilter,
-  Table,
   TableHead,
   TableRow,
 } from "@/components/extensions/primitives";
@@ -13,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { Empty, Section } from "../parts";
 import { coin, dateTime, price, qty, toneClass } from "../tradingFormat";
 import type { TradingT } from "../tradingI18n";
-import { LiveSourceNotice, OriginTag } from "./liveParts";
+import { LiveSourceNotice, OriginTag, ScrollTable } from "./liveParts";
 
 const PAGE = 100;
 
@@ -27,10 +26,10 @@ export function LiveTradesTab({ locale, t }: { locale: string; t: TradingT }) {
     { id: "time", label: t("live.trades.time"), width: "minmax(100px, 0.8fr)" },
     { id: "symbol", label: t("strategy.market"), width: "minmax(80px, 0.6fr)" },
     { id: "side", label: t("live.trades.side"), width: "80px" },
-    { id: "qty", label: t("live.trades.qty"), align: "right" },
-    { id: "price", label: t("live.trades.price"), align: "right" },
-    { id: "fee", label: t("live.trades.fee"), align: "right" },
-    { id: "realized", label: t("live.trades.realized"), align: "right" },
+    { id: "qty", label: t("live.trades.qty"), align: "right", width: "minmax(72px, 1fr)" },
+    { id: "price", label: t("live.trades.price"), align: "right", width: "minmax(80px, 1fr)" },
+    { id: "fee", label: t("live.trades.fee"), align: "right", width: "minmax(96px, 1fr)" },
+    { id: "realized", label: t("live.trades.realized"), align: "right", width: "minmax(112px, 1fr)" },
     { id: "role", label: t("live.trades.role"), width: "70px" },
     { id: "ids", label: t("live.trades.position"), width: "minmax(150px, 1fr)" },
     { id: "origin", label: t("live.positions.origin"), width: "60px" },
@@ -64,7 +63,7 @@ export function LiveTradesTab({ locale, t }: { locale: string; t: TradingT }) {
         {data.fills.length === 0 ? (
           <Empty>{t("live.trades.none")}</Empty>
         ) : (
-          <Table label={t("live.trades.title")}>
+          <ScrollTable label={t("live.trades.title")} minWidth={1110}>
             <TableHead columns={columns} />
             {data.fills.map((f) => (
               <TableRow key={f.trade_id} columns={columns}>
@@ -94,7 +93,7 @@ export function LiveTradesTab({ locale, t }: { locale: string; t: TradingT }) {
                 </Cell>
               </TableRow>
             ))}
-          </Table>
+          </ScrollTable>
         )}
         <p className="text-sm text-muted-foreground">
           {t("live.trades.fees_total", { total: data.total, fees: coin(locale, data.fees, { digits: 4 }) })}

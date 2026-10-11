@@ -36,7 +36,7 @@ from enum import StrEnum
 from typing import Any, Final
 
 from jarvis.live_history import normalize
-from jarvis.live_history.archive import LiveArchive, Outcome, RunStatus, gaps
+from jarvis.live_history.archive import LiveArchive, Origin, Outcome, RunStatus, gaps
 from jarvis.live_history.models import Entity, Order, Position, Record
 from jarvis.live_history.venue_rest import PAGE_LIMIT, ErrorKind, VenueError, VenueReadClient
 
@@ -125,6 +125,9 @@ class SyncService:
         margin_coin: str = "USDT",
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
     ) -> None:
+        if client.simulated and archive.origin is not Origin.SYNTHETIC:
+            # Simulated records must never land in an archive of the real account.
+            raise ValueError("a simulated venue can only fill a synthetic archive")
         self.client = client
         self.archive = archive
         self.venue = venue

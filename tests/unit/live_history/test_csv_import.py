@@ -43,7 +43,7 @@ def _now() -> int:
 
 
 def _archive(tmp_path: Path) -> LiveArchive:
-    return LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS)
+    return LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
 
 
 def _positions(a: LiveArchive) -> dict[str, Position]:
@@ -177,7 +177,7 @@ def test_columns_by_alias_mapping_and_refusals() -> None:
 
 async def test_csv_import_equals_the_api_and_never_overrides_it(tmp_path: Path) -> None:
     venue = SimulatedVenue(now_ms=NOW_MS)
-    api = LiveArchive.open(tmp_path / "api.sqlite", now_ms=NOW_MS)
+    api = LiveArchive.open(tmp_path / "api.sqlite", now_ms=NOW_MS, origin="synthetic")
     await SyncService(
         make_client(venue, FakeTime()),
         api,
@@ -186,7 +186,7 @@ async def test_csv_import_equals_the_api_and_never_overrides_it(tmp_path: Path) 
         source="simulated",
         now_ms=_now,
     ).run()
-    csv_only = LiveArchive.open(tmp_path / "csv.sqlite", now_ms=NOW_MS)
+    csv_only = LiveArchive.open(tmp_path / "csv.sqlite", now_ms=NOW_MS, origin="synthetic")
     pos_csv = venue_positions_csv(venue, tmp_path / "positions.csv")
     fills_csv = venue_fills_csv(venue, tmp_path / "fills.csv")
     r1 = import_csv(csv_only, pos_csv, ImportOptions(ImportKind.POSITIONS), now_ms=_now)
@@ -228,7 +228,7 @@ def test_localized_export_needs_a_timezone_and_converts_everything(tmp_path: Pat
         now_ms=_now,
     )
     path = venue_positions_csv(venue, tmp_path / "local.csv", style="localized")
-    other = LiveArchive.open(tmp_path / "other.sqlite", now_ms=NOW_MS)
+    other = LiveArchive.open(tmp_path / "other.sqlite", now_ms=NOW_MS, origin="synthetic")
     refused = import_csv(other, path, ImportOptions(ImportKind.POSITIONS), now_ms=_now)
     assert refused.refused is IssueCode.TIMEZONE_REQUIRED and refused.status is RunStatus.FAILED
     assert other.count(Entity.POSITION, venue="primary", account="main") == 0
@@ -259,7 +259,7 @@ def test_reimport_is_idempotent_and_dry_run_writes_nothing(tmp_path: Path) -> No
     venue = SimulatedVenue(now_ms=NOW_MS)
     path = venue_positions_csv(venue, tmp_path / "p.csv")
     db = tmp_path / "live.sqlite"
-    a = LiveArchive.open(db, now_ms=NOW_MS)
+    a = LiveArchive.open(db, now_ms=NOW_MS, origin="synthetic")
     before = hashlib.sha256(db.read_bytes()).hexdigest()
     dry = import_csv(a, path, ImportOptions(ImportKind.POSITIONS), now_ms=_now, dry_run=True)
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
@@ -365,7 +365,7 @@ def test_fees_funding_and_foreign_fee_currency(tmp_path: Path) -> None:
     assert (4, IssueCode.FOREIGN_FEE_CURRENCY) in {(i.line, i.code) for i in r.issues}
     assert _positions(a)["P1"].fee == Decimal("-0.73")
     # the file declares that fees are negative debits and funding is shown as paid-positive
-    b = LiveArchive.open(tmp_path / "b.sqlite", now_ms=NOW_MS)
+    b = LiveArchive.open(tmp_path / "b.sqlite", now_ms=NOW_MS, origin="synthetic")
     rows2 = [_pos_row("P1", fee="-0.73", funding="0.2")]
     import_csv(
         b,
@@ -401,14 +401,14 @@ def test_pnl_definitions(tmp_path: Path) -> None:
         ("9.27", PnlBasis.NET_OF_FEES),
         ("9.07", PnlBasis.NET),
     ):
-        a = LiveArchive.open(tmp_path / f"{basis}.sqlite", now_ms=NOW_MS)
+        a = LiveArchive.open(tmp_path / f"{basis}.sqlite", now_ms=NOW_MS, origin="synthetic")
         r = import_csv(
             a, file(f"{basis}.csv", pnl), ImportOptions(ImportKind.POSITIONS), now_ms=_now
         )
         assert r.pnl_basis is basis and r.pnl_basis_source == "inferred"
         assert {p.realized_pnl for p in _positions(a).values()} == {Decimal("10")}
     # declared against the evidence: kept, but reported
-    a = LiveArchive.open(tmp_path / "doubt.sqlite", now_ms=NOW_MS)
+    a = LiveArchive.open(tmp_path / "doubt.sqlite", now_ms=NOW_MS, origin="synthetic")
     r = import_csv(
         a,
         file("doubt.csv", "9.07"),
@@ -417,11 +417,11 @@ def test_pnl_definitions(tmp_path: Path) -> None:
     )
     assert r.pnl_basis_source == "declared" and IssueCode.PNL_BASIS_DOUBTFUL.value in _codes(r)
     # rows that fit no basis: refused rather than guessed
-    a = LiveArchive.open(tmp_path / "none.sqlite", now_ms=NOW_MS)
+    a = LiveArchive.open(tmp_path / "none.sqlite", now_ms=NOW_MS, origin="synthetic")
     r = import_csv(a, file("none.csv", "3.5"), ImportOptions(ImportKind.POSITIONS), now_ms=_now)
     assert r.refused is IssueCode.PNL_BASIS_REQUIRED
     # net P/L without a funding column: the venue's gross figure is unknowable
-    a = LiveArchive.open(tmp_path / "nofund.sqlite", now_ms=NOW_MS)
+    a = LiveArchive.open(tmp_path / "nofund.sqlite", now_ms=NOW_MS, origin="synthetic")
     r = import_csv(
         a,
         file("nofund.csv", "9.27", funding=False),
@@ -430,7 +430,7 @@ def test_pnl_definitions(tmp_path: Path) -> None:
     )
     assert r.refused is IssueCode.NET_PNL_WITHOUT_FUNDING
     # fills carry no prices to infer from: the basis must be declared
-    a = LiveArchive.open(tmp_path / "fills.sqlite", now_ms=NOW_MS)
+    a = LiveArchive.open(tmp_path / "fills.sqlite", now_ms=NOW_MS, origin="synthetic")
     venue = SimulatedVenue(now_ms=NOW_MS)
     r = import_csv(
         a,
@@ -587,6 +587,7 @@ def test_cli_import(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = venue_positions_csv(venue, tmp_path / "p.csv", style="localized")
     db = tmp_path / "live.sqlite"
     args = ["import", "--archive", str(db), "--file", str(path), "--kind", "positions"]
+    args += ["--origin", "synthetic"]
     assert cli.main([*args, "--dry-run", "--tz", _BERLIN]) == 0
     assert json.loads(capsys.readouterr().out)["dry_run"] is True
     assert not db.exists()

@@ -10,7 +10,8 @@
  * the owner starts on the command line.
  */
 import { useState } from "react";
-import { Landmark } from "lucide-react";
+import { FlaskConical, Landmark } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   useLiveCosts,
@@ -45,6 +46,7 @@ export function LiveDesk({
   const sources = useLiveSources(tab === "sources");
   const source: TradingLiveSource | undefined = overview.data?.source;
   const sourceOk = source?.state === "ok";
+  const origin = source?.state === "ok" ? source.origin : "unknown";
   const failed = overview.error instanceof Error ? overview.error.message : null;
 
   function body<T extends { source: TradingLiveSource }>(
@@ -60,14 +62,33 @@ export function LiveDesk({
 
   return (
     <div className="flex flex-col gap-4" data-testid="trading-live">
+      {/* Real account data and generated demo data never look alike: the
+          banner says which one this archive holds (lh_meta.origin). Until it
+          is known, it claims neither. */}
       <div
         role="note"
         data-testid="trading-live-banner"
-        className="flex items-start gap-3 rounded-lg border border-warning/50 bg-warning/10 px-4 py-3 text-sm text-foreground"
+        data-origin={origin}
+        className={cn(
+          "flex items-start gap-3 rounded-lg px-4 py-3 text-sm text-foreground",
+          origin === "synthetic"
+            ? "border-2 border-dashed border-info/60 bg-info/10"
+            : "border border-warning/50 bg-warning/10",
+        )}
       >
-        <Landmark className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
+        {origin === "synthetic" ? (
+          <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-info" aria-hidden />
+        ) : (
+          <Landmark className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
+        )}
         <div className="flex flex-col gap-1">
-          <span className="font-medium">{t("live.banner")}</span>
+          <span className="font-medium">
+            {origin === "synthetic"
+              ? t("live.banner_synthetic")
+              : origin === "real"
+                ? t("live.banner")
+                : t("live.banner_pending")}
+          </span>
           <span className="text-muted-foreground">{t("live.definitions")}</span>
         </div>
       </div>
@@ -84,7 +105,7 @@ export function LiveDesk({
       {source ? <LiveWarningList source={source} t={t} /> : null}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <TabsList className="flex-wrap justify-start">
+        <TabsList className="h-auto flex-wrap justify-start">
           {TABS.map((id) => (
             <TabsTrigger key={id} value={id} data-testid={`live-tab-${id}`}>
               {t(`live.tabs.${id}`)}

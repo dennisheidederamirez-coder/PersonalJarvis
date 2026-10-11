@@ -64,7 +64,7 @@ def build_demo_archive(directory: Path, now_ms: int = NOW_MS) -> DemoArchive:
         f.unlink()
     t0 = now_ms - 6 * DAY_MS
     venue = SimulatedVenue(now_ms=t0, days=150, closed_positions=36)
-    archive = LiveArchive.open(path, now_ms=t0)
+    archive = LiveArchive.open(path, now_ms=t0, origin="synthetic")
     try:
         asyncio.run(_sync(venue, archive, t0))
         venue.now_ms = t0 + 2 * DAY_MS

@@ -33,7 +33,8 @@ export function LiveOverviewTab({
 
   return (
     <div className="flex flex-col gap-6" data-testid="live-overview">
-      <StatGroup>
+      {/* one tile per row on a phone, so no amount is cut off */}
+      <StatGroup className="max-sm:grid-cols-1 max-sm:[&>*]:border-l-0 max-sm:[&>*:nth-child(n+2)]:border-t">
         <StatTile
           cell
           icon={<Wallet className="h-4 w-4" />}

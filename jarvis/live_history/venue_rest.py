@@ -156,6 +156,11 @@ class VenueReadClient:
 
     # ---------------------------------------------------------------- endpoints
 
+    @property
+    def simulated(self) -> bool:
+        """The client talks to a simulated venue (today: always, see ``SIMULATED_HOSTS``)."""
+        return (urlsplit(self._base).hostname or "") in SIMULATED_HOSTS
+
     async def account(self, margin_coin: str) -> Any:
         return await self.get(ACCOUNT, {"marginCoin": margin_coin})
 

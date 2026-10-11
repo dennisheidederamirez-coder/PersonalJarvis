@@ -78,6 +78,25 @@ warnings. Only the active mode's queries run. There is no route or button
 that syncs, imports or trades; new LIVE data arrives only through a sync or
 import someone starts on the command line.
 
+**Real or demo.** The archive's `lh_meta.origin` decides the wording: a
+`synthetic` archive is shown as "LIVE history · demo data" with a dashed
+demo banner ("synthetic test data, not real account data"); only a `real`
+archive is called the real account; until the origin is known (or when the
+label is missing) neither claim is made and a warning says so.
+
+**Reconciliation tab.** Each row shows severity, the finding with its check
+and compared field and the likely cause in words, what it is assigned to
+(symbol, side, position id, journal entry id, summed fills or the two
+balance observations, open/close times), the exchange's value with its
+source tag (API/CSV), the compared value with its source (sum of fills,
+journal name, trade history) and the difference.
+
+**Narrow panes.** LIVE tables keep minimum column widths and scroll sideways
+inside their own frame (the page never does); amounts never wrap; the stat
+tiles go to one per row below 640 px; the header switches wrap under the
+title; wrapped tab rows no longer overlap the content (also in the paper
+view). Checked at 1440, 768 and 390 px wide.
+
 Configuration: `[trading_dashboard].live_archive_path` (empty =
 `<data_dir>/trading/live_history.sqlite`), set only through
 `config_writer.set_trading_dashboard_live_archive_path()`.

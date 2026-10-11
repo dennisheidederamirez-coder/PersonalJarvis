@@ -48,7 +48,7 @@ def _digest(path: Path) -> str:
 
 async def test_first_sync_archives_everything_in_the_look_back(tmp_path: Path) -> None:
     venue = SimulatedVenue(now_ms=NOW_MS)
-    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS)
+    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
     report = await _service(venue, archive).run()
     assert report.status is RunStatus.OK
     assert report.error_code is None and report.rejected == 0
@@ -75,7 +75,7 @@ async def test_first_sync_archives_everything_in_the_look_back(tmp_path: Path) -
 
 async def test_second_sync_finds_only_duplicates(tmp_path: Path) -> None:
     venue = SimulatedVenue(now_ms=NOW_MS)
-    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS)
+    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
     await _service(venue, archive).run()
     revisions_before = archive._conn.execute("SELECT COUNT(*) FROM lh_revisions").fetchone()[0]
     clock = [NOW_MS + 60_000]
@@ -93,7 +93,7 @@ async def test_second_sync_finds_only_duplicates(tmp_path: Path) -> None:
 async def test_dry_run_reports_the_same_changes_and_writes_nothing(tmp_path: Path) -> None:
     venue = SimulatedVenue(now_ms=NOW_MS)
     path = tmp_path / "live.sqlite"
-    archive = LiveArchive.open(path, now_ms=NOW_MS)
+    archive = LiveArchive.open(path, now_ms=NOW_MS, origin="synthetic")
     before = _digest(path)
     dry = await _service(venue, archive).run(dry_run=True)
     assert _digest(path) == before
@@ -107,7 +107,7 @@ async def test_dry_run_reports_the_same_changes_and_writes_nothing(tmp_path: Pat
 async def test_a_position_closed_after_its_window_is_still_completed(tmp_path: Path) -> None:
     """History is filtered by OPEN time; the open position must still arrive closed."""
     venue = SimulatedVenue(now_ms=NOW_MS)
-    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS)
+    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
     await _service(venue, archive).run()
     later = NOW_MS + 5 * DAY_MS
     venue.now_ms = later
@@ -126,7 +126,7 @@ async def test_a_position_closed_after_its_window_is_still_completed(tmp_path: P
 async def test_rejected_item_leaves_its_window_open_and_is_retried(tmp_path: Path) -> None:
     venue = SimulatedVenue(now_ms=NOW_MS)
     venue.corrupt_next = True
-    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS)
+    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
     first = await _service(venue, archive).run()
     assert first.status is RunStatus.PARTIAL
     assert first.rejected == 1
@@ -153,7 +153,7 @@ async def test_rejected_item_leaves_its_window_open_and_is_retried(tmp_path: Pat
 async def test_venue_failure_is_recorded_not_raised(tmp_path: Path) -> None:
     venue = SimulatedVenue(now_ms=NOW_MS)
     venue.fail_next = deque([503] * 10)
-    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS)
+    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
     report = await _service(venue, archive).run()
     assert report.status is RunStatus.FAILED
     assert report.error_code == "unavailable"
@@ -164,7 +164,7 @@ async def test_venue_failure_is_recorded_not_raised(tmp_path: Path) -> None:
 
 async def test_backfill_plan_separates_api_from_export(tmp_path: Path) -> None:
     venue = SimulatedVenue(now_ms=NOW_MS, days=150)
-    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS)
+    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
     await _service(venue, archive).run()
     since = NOW_MS - 150 * DAY_MS
     plan = plan_backfill(archive, venue="primary", account="main", since_ms=since, now_ms=NOW_MS)
@@ -203,3 +203,20 @@ def test_cli_sync_status_and_plan(tmp_path: Path, capsys: pytest.CaptureFixture[
 def test_cli_has_no_live_mode() -> None:
     with pytest.raises(SystemExit):
         cli.main(["sync", "--archive", "x.sqlite"])  # --simulated is mandatory
+
+
+def test_the_simulated_venue_never_fills_a_real_archive(tmp_path: Path) -> None:
+    venue = SimulatedVenue(now_ms=NOW_MS)
+    real = LiveArchive.open(tmp_path / "real.sqlite", now_ms=NOW_MS, origin="real")
+    with pytest.raises(ValueError, match="synthetic archive"):
+        _service(venue, real)
+    assert real.count(Entity.POSITION, venue="primary", account="main") == 0
+
+
+def test_cli_keeps_origins_apart(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = tmp_path / "real.sqlite"
+    LiveArchive.open(path, now_ms=NOW_MS, origin="real").close()
+    assert cli.main(["sync", "--archive", str(path), "--simulated"]) == 2
+    assert "holds real data" in capsys.readouterr().out
+    assert cli.main(["status", "--archive", str(path)]) == 0
+    assert json.loads(capsys.readouterr().out)["origin"] == "real"

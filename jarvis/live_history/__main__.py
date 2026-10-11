@@ -6,12 +6,17 @@
         [--decimal comma|point] [--fee-sign auto|cost_positive|cost_negative]
         [--funding-sign received_positive|paid_positive] [--journal NAME]
         [--covers FROM TO] [--dry-run]
+    python -m jarvis.live_history inspect --file CSV --kind positions|fills|journal
+        [--tz …] [--pnl-basis …] [--map field=Header ...] [--decimal comma|point]
     python -m jarvis.live_history status --archive PATH
     python -m jarvis.live_history plan-backfill --archive PATH --since 2026-01-01
 
 ``sync`` requires ``--simulated``: the venue client accepts only the simulated
 host, and there is no option for real credentials. ``import`` only reads the
-given file. Each command prints JSON; a refused import exits with 2.
+given file and needs ``--origin real|synthetic`` (an archive never mixes the
+two; a real export inside the git repository is refused). ``inspect``
+reports an export's format — headers, counts, shares, issue codes — never
+its contents, and writes nothing. Each command prints JSON; a refused import exits with 2.
 Nothing here schedules itself; a run happens only when someone types it.
 """
 
@@ -27,8 +32,15 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.core.http_pool import HttpClientPool
-from jarvis.live_history.archive import LiveArchive, describe
+from jarvis.live_history.archive import (
+    ArchiveError,
+    LiveArchive,
+    Origin,
+    describe,
+    stored_origin,
+)
 from jarvis.live_history.csv_import import ImportKind, ImportOptions, import_csv
+from jarvis.live_history.inspect_export import InsideRepository, inside_git_tree, inspect_export
 from jarvis.live_history.reconcile import PnlBasis
 from jarvis.live_history.simulated_venue import BASE_URL, SIM_CREDENTIALS, SimulatedVenue
 from jarvis.live_history.sync import SyncService, plan_backfill
@@ -100,15 +112,42 @@ def _import(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     if not args.file.is_file():
         return 2, {"error": "no file at this path"}
     now = _now_ms()
-    if args.dry_run and not args.archive.exists():
-        archive = LiveArchive.in_memory(now_ms=now)  # a dry run never creates the file
-    else:
-        archive = LiveArchive.open(args.archive, now_ms=now)
+    origin = Origin(args.origin)
+    if origin is Origin.REAL and inside_git_tree(args.file) is not None:
+        # A real export inside the repository is one `git add` away from being published.
+        return 2, {"error": "a real export must lie outside the git repository"}
+    try:
+        if args.dry_run and not args.archive.exists():
+            # a dry run never creates the file
+            archive = LiveArchive.in_memory(now_ms=now, origin=origin)
+        else:
+            archive = LiveArchive.open(args.archive, now_ms=now, origin=origin)
+    except ArchiveError as exc:  # reported as JSON, exit code 2
+        return 2, {"error": str(exc)}
     try:
         report = import_csv(archive, args.file, opts, now_ms=_now_ms, dry_run=args.dry_run)
     finally:
         archive.close()
     return (2 if report.refused else 0), report.as_dict()
+
+
+def _inspect(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    mapping = _mapping(args.map)
+    if mapping is None:
+        return 2, {"error": "bad --map, expected field=Header"}
+    if not args.file.is_file():
+        return 2, {"error": "no file at this path"}
+    opts = ImportOptions(
+        kind=ImportKind(args.kind),
+        mapping=mapping,
+        tz=args.tz,
+        decimal_comma=None if args.decimal is None else args.decimal == "comma",
+        pnl_basis=PnlBasis(args.pnl_basis) if args.pnl_basis else None,
+    )
+    try:
+        return 0, inspect_export(args.file, opts, now_ms=_now_ms)
+    except InsideRepository as exc:  # reported as JSON, exit code 2
+        return 2, {"error": str(exc)}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -122,6 +161,12 @@ def main(argv: list[str] | None = None) -> int:
     im.add_argument("--archive", type=Path, required=True)
     im.add_argument("--file", type=Path, required=True)
     im.add_argument("--kind", choices=[k.value for k in ImportKind], required=True)
+    im.add_argument(
+        "--origin",
+        choices=[o.value for o in Origin],
+        required=True,
+        help="real (the owner's export) or synthetic (generated samples); never mixed",
+    )
     im.add_argument("--tz", help="IANA zone of times without an offset, e.g. Europe/Berlin")
     im.add_argument("--pnl-basis", choices=[b.value for b in PnlBasis])
     im.add_argument("--map", action="append", default=[], help="field=Header (repeatable)")
@@ -142,6 +187,15 @@ def main(argv: list[str] | None = None) -> int:
         help="UTC dates the file covers COMPLETELY (recorded as coverage)",
     )
     im.add_argument("--dry-run", action="store_true")
+    ins = sub.add_parser(
+        "inspect", help="report a real export's format without its contents (writes nothing)"
+    )
+    ins.add_argument("--file", type=Path, required=True)
+    ins.add_argument("--kind", choices=[k.value for k in ImportKind], required=True)
+    ins.add_argument("--tz")
+    ins.add_argument("--pnl-basis", choices=[b.value for b in PnlBasis])
+    ins.add_argument("--map", action="append", default=[], help="field=Header (repeatable)")
+    ins.add_argument("--decimal", choices=["comma", "point"])
     st = sub.add_parser("status", help="what the archive holds and its last runs")
     st.add_argument("--archive", type=Path, required=True)
     pb = sub.add_parser("plan-backfill", help="missing windows and how to fill them")
@@ -149,16 +203,22 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("--since", required=True, help="UTC date, YYYY-MM-DD")
     args = parser.parse_args(argv)
 
-    if args.cmd == "import":
-        code, result = _import(args)
+    if args.cmd in ("import", "inspect"):
+        code, result = _import(args) if args.cmd == "import" else _inspect(args)
         print(json.dumps(result, indent=2, default=str))
         return code
     if args.cmd == "sync":
         now = _now_ms()
-        if args.dry_run and not args.archive.exists():
-            archive = LiveArchive.in_memory(now_ms=now)  # a dry run never creates the file
-        else:
-            archive = LiveArchive.open(args.archive, now_ms=now)
+        # The simulated venue only ever fills a synthetic archive.
+        try:
+            if args.dry_run and not args.archive.exists():
+                # a dry run never creates the file
+                archive = LiveArchive.in_memory(now_ms=now, origin=Origin.SYNTHETIC)
+            else:
+                archive = LiveArchive.open(args.archive, now_ms=now, origin=Origin.SYNTHETIC)
+        except ArchiveError as exc:  # reported as JSON, exit code 2
+            print(json.dumps({"error": str(exc)}))
+            return 2
         try:
             out: Any = asyncio.run(_sync(archive, now=now, dry_run=args.dry_run))
         finally:
@@ -167,7 +227,11 @@ def main(argv: list[str] | None = None) -> int:
         if not args.archive.exists():
             print(json.dumps({"error": "no archive at this path"}))
             return 1
-        archive = LiveArchive.open(args.archive, now_ms=_now_ms())
+        origin = stored_origin(args.archive)
+        if origin is None:
+            print(json.dumps({"error": "not a LIVE archive with an origin label"}))
+            return 1
+        archive = LiveArchive.open(args.archive, now_ms=_now_ms(), origin=origin)
         try:
             if args.cmd == "status":
                 out = describe(archive, venue=VENUE, account=ACCOUNT)

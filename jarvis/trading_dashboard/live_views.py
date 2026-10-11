@@ -46,9 +46,16 @@ MAX_ISSUES_SHOWN: Final = 200
 MAX_FINDINGS_SHOWN: Final = 500
 
 
+@dataclass(frozen=True)
+class _Hit:
+    group: str  # internal / journal / balance
+    finding: Finding
+    period: tuple[int, int] | None = None  # balance: the two observations
+
+
 @dataclass
 class _Recon:
-    findings: list[tuple[str, Finding, int | None]]  # (group, finding, ts)
+    findings: list[_Hit]
     journal: str | None
     journal_span: tuple[int, int] | None
     pnl_basis: str | None
@@ -193,6 +200,8 @@ def source(ctx: LiveContext) -> s.LiveSource:
         warnings.append("import_issues")
     if snap.truncated:
         warnings.append("records_truncated")
+    if snap.origin == "unknown":
+        warnings.append("origin_unknown")
     return s.LiveSource(
         state="ok",
         detail="",
@@ -203,6 +212,7 @@ def source(ctx: LiveContext) -> s.LiveSource:
         read_ms=snap.read_ms,
         last_sync_ms=last_sync,
         last_import_ms=max((r.finished_ms or r.started_ms for r in imports), default=None),
+        origin=snap.origin,
         warnings=warnings,
     )
 
@@ -246,7 +256,7 @@ def overview(ctx: LiveContext) -> s.LiveOverview:
         running += by_day[day]
         series.append(s.LivePnlPoint(day=day, net=float(by_day[day]), cumulative=float(running)))
     open_ = [p for p in snap.positions if p.status == "open"]
-    severities = Counter(f.severity.value for _, f, _ in ctx.recon().findings)
+    severities = Counter(h.finding.severity.value for h in ctx.recon().findings)
     latest = snap.balances[-1] if snap.balances else None
     return s.LiveOverview(
         source=src,
@@ -300,9 +310,9 @@ def positions(
             source=src, open=[], closed=[], total_closed=0, offset=offset, limit=limit, symbols=[]
         )
     codes: dict[str, list[str]] = defaultdict(list)
-    for _, f, _ in ctx.recon().findings:
-        if f.position_id:
-            codes[f.position_id].append(f.code.value)
+    for h in ctx.recon().findings:
+        if h.finding.position_id:
+            codes[h.finding.position_id].append(h.finding.code.value)
     wanted = [p for p in snap.positions if symbol is None or p.symbol == symbol]
     open_ = sorted((p for p in wanted if p.status == "open"), key=lambda p: -p.opened_ms)
     closed = sorted(
@@ -429,9 +439,7 @@ def _default_journal(snap: LiveSnapshot) -> str | None:
 
 
 def _reconcile(snap: LiveSnapshot, journal: str | None) -> _Recon:
-    out: list[tuple[str, Finding, int | None]] = [
-        ("internal", f, None) for f in check_internal(snap.positions, snap.fills)
-    ]
+    out: list[_Hit] = [_Hit("internal", f) for f in check_internal(snap.positions, snap.fills)]
     span: tuple[int, int] | None = None
     basis: str | None = None
     compared = entries_n = matched = 0
@@ -443,7 +451,7 @@ def _reconcile(snap: LiveSnapshot, journal: str | None) -> _Recon:
             # Only the venue positions the journal could know: those opened in its span.
             venue = [p for p in snap.positions if span[0] - slack <= p.opened_ms <= span[1] + slack]
             result = reconcile_journal(venue, entries)
-            out += [("journal", f, None) for f in result.findings]
+            out += [_Hit("journal", f) for f in result.findings]
             compared, entries_n, matched = len(venue), len(entries), len(result.pairs)
             bases = {e.pnl_basis.value for e in entries if e.pnl is not None}
             basis = bases.pop() if len(bases) == 1 else ("mixed" if bases else None)
@@ -461,23 +469,85 @@ def _reconcile(snap: LiveSnapshot, journal: str | None) -> _Recon:
             if k in then or p.status == "open" or p.updated_ms >= before.ts_ms
         }
         checks += 1
-        out += [("balance", f, after.ts_ms) for f in check_balance(before, after, then, now)]
+        period = (before.ts_ms, after.ts_ms)
+        out += [_Hit("balance", f, period) for f in check_balance(before, after, then, now)]
     return _Recon(out, journal, span, basis, compared, entries_n, matched, checks)
 
 
-def _finding(group: str, f: Finding, ts: int | None) -> s.LiveFinding:
+_FIELD: Final = {
+    "fill_fee_mismatch": "fee",
+    "fill_pnl_mismatch": "realized",
+    "fee_mismatch": "fee",
+    "funding_mismatch": "funding",
+    "pnl_mismatch": "pnl",
+    "price_mismatch": "close_price",
+    "status_mismatch": "status",
+    "unexplained_balance_change": "wallet",
+}
+_OTHER: Final = {"internal": "fills", "journal": "journal", "balance": "trade_history"}
+
+
+def _finding(snap: LiveSnapshot, rec: _Recon, hit: _Hit) -> s.LiveFinding:
+    f = hit.finding
+    pos = _by_position(snap).get(f.position_id) if f.position_id else None
+    entry = _by_entry(snap, rec.journal).get(f.entry_id) if f.entry_id and rec.journal else None
+    fills: list[str] = []
+    if hit.group == "internal" and f.position_id:
+        fills = sorted(x.trade_id for x in snap.fills if x.position_id == f.position_id)
+    opened = pos.opened_ms if pos else (entry.opened_ms if entry else None)
+    if pos is not None:
+        closed = pos.updated_ms if pos.status == "closed" else None
+    else:
+        closed = entry.closed_ms if entry else None
+    basis = None
+    if f.code.value == "pnl_mismatch" and entry is not None:
+        basis = entry.pnl_basis.value
+    ident = ":".join(
+        str(x)
+        for x in (
+            hit.group,
+            f.code.value,
+            f.position_id or "",
+            f.entry_id or "",
+            hit.period[1] if hit.period else "",
+        )
+    )
     return s.LiveFinding(
+        id=ident,
         code=f.code.value,
         severity=f.severity.value,
-        group=group,
+        group=hit.group,
+        field=_FIELD.get(f.code.value),
         position_id=f.position_id,
         entry_id=f.entry_id,
         symbol=f.symbol,
+        side=pos.side if pos else (entry.side.lower() if entry else None),
+        opened_ms=opened,
+        closed_ms=closed,
+        venue_source=(
+            _origin(snap, "position", pos.position_id)
+            if pos
+            else ("api" if hit.group == "balance" else None)
+        ),
+        other_source=_OTHER[hit.group],
+        journal=rec.journal if hit.group == "journal" else None,
+        basis=basis,
+        fill_ids=fills,
+        period_from_ms=hit.period[0] if hit.period else None,
+        period_to_ms=hit.period[1] if hit.period else None,
         venue_value=_f(f.venue_value),
         other_value=_f(f.other_value),
         difference=_f(f.difference),
-        ts_ms=ts,
+        ts_ms=hit.period[1] if hit.period else None,
     )
+
+
+def _by_position(snap: LiveSnapshot) -> dict[str, Position]:
+    return {p.position_id: p for p in snap.positions}
+
+
+def _by_entry(snap: LiveSnapshot, journal: str) -> dict[str, JournalEntry]:
+    return {e.entry_id: e for e in snap.journals.get(journal, ())}
 
 
 _SEVERITY_ORDER: Final = {"error": 0, "warning": 1, "info": 2}
@@ -487,15 +557,19 @@ def reconciliation(ctx: LiveContext, *, journal: str | None = None) -> s.LiveRec
     src = source(ctx)
     snap = ctx.snap
     rec = ctx.recon(journal)
-    findings = sorted(
-        (_finding(g, f, ts) for g, f, ts in rec.findings),
-        key=lambda f: (
-            _SEVERITY_ORDER.get(f.severity, 3),
-            f.group,
-            f.code,
-            f.symbol or "",
-            f.position_id or f.entry_id or "",
-        ),
+    findings = (
+        sorted(
+            (_finding(snap, rec, h) for h in rec.findings),
+            key=lambda f: (
+                _SEVERITY_ORDER.get(f.severity, 3),
+                f.group,
+                f.code,
+                f.symbol or "",
+                f.position_id or f.entry_id or "",
+            ),
+        )
+        if isinstance(snap, LiveSnapshot)
+        else []
     )
     return s.LiveReconciliationView(
         source=src,

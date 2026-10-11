@@ -71,7 +71,7 @@ def test_cosmetic_decimal_difference_is_not_a_change() -> None:
 
 
 def test_insert_then_duplicate_then_update_with_revisions(tmp_path: Path) -> None:
-    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW)
+    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW, origin="synthetic")
     with a.batch():
         run = a.begin_run(venue="primary", account="main", kind="sync", source="test", now_ms=NOW)
         assert a.upsert(_position(), run_id=run, now_ms=NOW, source="test") is Outcome.INSERTED
@@ -95,7 +95,7 @@ def test_insert_then_duplicate_then_update_with_revisions(tmp_path: Path) -> Non
 
 
 def test_same_id_in_another_account_is_another_record(tmp_path: Path) -> None:
-    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW)
+    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW, origin="synthetic")
     with a.batch():
         run = a.begin_run(venue="primary", account="main", kind="sync", source="test", now_ms=NOW)
         a.upsert(_position(), run_id=run, now_ms=NOW, source="test")
@@ -106,7 +106,7 @@ def test_same_id_in_another_account_is_another_record(tmp_path: Path) -> None:
 
 def test_rolled_back_batch_leaves_nothing(tmp_path: Path) -> None:
     path = tmp_path / "live.sqlite"
-    a = LiveArchive.open(path, now_ms=NOW)
+    a = LiveArchive.open(path, now_ms=NOW, origin="synthetic")
     before = path.read_bytes()
     with a.batch(commit=False):
         run = a.begin_run(venue="primary", account="main", kind="sync", source="test", now_ms=NOW)
@@ -119,17 +119,17 @@ def test_rolled_back_batch_leaves_nothing(tmp_path: Path) -> None:
 
 
 def test_live_archive_is_tagged_and_refuses_a_paper_journal(tmp_path: Path) -> None:
-    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW)
+    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW, origin="synthetic")
     assert a.meta()["mode"] == "live"
     a.close()
     paper = SqliteJournal(tmp_path / "paper.sqlite")
     paper.commit([("step", 1, "*", {"processed": {}})], {"last_job_run": 1})
     with pytest.raises(ArchiveError, match="paper-trading journal"):
-        LiveArchive.open(tmp_path / "paper.sqlite", now_ms=NOW)
+        LiveArchive.open(tmp_path / "paper.sqlite", now_ms=NOW, origin="synthetic")
 
 
 def test_paper_dashboard_rejects_a_live_archive(tmp_path: Path) -> None:
-    LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW).close()
+    LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW, origin="synthetic").close()
     result = JournalReader(tmp_path / "live.sqlite").read()
     assert isinstance(result, ReadFailure)
     assert result.state is SourceState.INVALID
@@ -139,23 +139,23 @@ def test_foreign_or_newer_files_are_refused(tmp_path: Path) -> None:
     other = tmp_path / "other.sqlite"
     sqlite3.connect(other).execute("CREATE TABLE something (x)").connection.commit()
     with pytest.raises(ArchiveError, match="not a LIVE archive"):
-        LiveArchive.open(other, now_ms=NOW)
+        LiveArchive.open(other, now_ms=NOW, origin="synthetic")
     newer = tmp_path / "newer.sqlite"
-    LiveArchive.open(newer, now_ms=NOW).close()
+    LiveArchive.open(newer, now_ms=NOW, origin="synthetic").close()
     with sqlite3.connect(newer) as conn:
         conn.execute("UPDATE lh_meta SET value = '99' WHERE key = 'schema_version'")
     with pytest.raises(ArchiveError, match="newer version"):
-        LiveArchive.open(newer, now_ms=NOW)
+        LiveArchive.open(newer, now_ms=NOW, origin="synthetic")
     wrong_mode = tmp_path / "paper_mode.sqlite"
-    LiveArchive.open(wrong_mode, now_ms=NOW).close()
+    LiveArchive.open(wrong_mode, now_ms=NOW, origin="synthetic").close()
     with sqlite3.connect(wrong_mode) as conn:
         conn.execute("UPDATE lh_meta SET value = 'paper' WHERE key = 'mode'")
     with pytest.raises(ArchiveError, match="mode"):
-        LiveArchive.open(wrong_mode, now_ms=NOW)
+        LiveArchive.open(wrong_mode, now_ms=NOW, origin="synthetic")
 
 
 def test_coverage_merges_and_gaps_are_exact(tmp_path: Path) -> None:
-    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW)
+    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW, origin="synthetic")
     with a.batch():
         for lo, hi in [(0, 10), (5, 20), (30, 40)]:
             a.add_coverage(
@@ -169,7 +169,7 @@ def test_coverage_merges_and_gaps_are_exact(tmp_path: Path) -> None:
 
 
 def test_positions_as_of_reads_history(tmp_path: Path) -> None:
-    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW)
+    a = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW, origin="synthetic")
     opened = _position()
     closed = replace(
         opened, status="closed", realized_pnl=Decimal("5"), close_price=Decimal("61000")
@@ -181,3 +181,24 @@ def test_positions_as_of_reads_history(tmp_path: Path) -> None:
     assert a.positions_as_of(NOW + 50, venue="primary", account="main")["P1"].status == "open"
     assert a.positions_as_of(NOW + 100, venue="primary", account="main")["P1"].status == "closed"
     assert a.positions_as_of(NOW - 1, venue="primary", account="main") == {}
+
+
+def test_real_and_synthetic_never_share_an_archive(tmp_path: Path) -> None:
+    from jarvis.live_history.archive import ArchiveError, Origin, stored_origin
+
+    path = tmp_path / "live.sqlite"
+    LiveArchive.open(path, now_ms=NOW, origin="synthetic").close()
+    assert stored_origin(path) is Origin.SYNTHETIC
+    with pytest.raises(ArchiveError, match="holds synthetic data"):
+        LiveArchive.open(path, now_ms=NOW, origin="real")
+    real = tmp_path / "real.sqlite"
+    a = LiveArchive.open(real, now_ms=NOW, origin=Origin.REAL)
+    assert a.origin is Origin.REAL
+    a.close()
+    with pytest.raises(ArchiveError, match="holds real data"):
+        LiveArchive.open(real, now_ms=NOW, origin="synthetic")
+    with sqlite3.connect(real) as c:
+        c.execute("DELETE FROM lh_meta WHERE key = 'origin'")
+    with pytest.raises(ArchiveError, match="no origin label"):
+        LiveArchive.open(real, now_ms=NOW, origin="real")
+    assert stored_origin(real) is None and stored_origin(tmp_path / "none.sqlite") is None

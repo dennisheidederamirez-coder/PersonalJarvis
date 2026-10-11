@@ -24,7 +24,7 @@ from tests.fakes.fake_live_venue import NOW_MS, FakeTime, make_client
 
 async def _archive(tmp_path: Path) -> tuple[LiveArchive, SimulatedVenue]:
     venue = SimulatedVenue(now_ms=NOW_MS)
-    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS)
+    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
     await SyncService(
         make_client(venue, FakeTime()),
         archive,
@@ -206,7 +206,7 @@ def test_rounding_inside_tolerance_is_not_a_difference() -> None:
 
 async def test_balance_change_is_explained_by_the_trades(tmp_path: Path) -> None:
     venue = SimulatedVenue(now_ms=NOW_MS)
-    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS)
+    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
     t1 = NOW_MS
 
     def service(now: int) -> SyncService:

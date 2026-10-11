@@ -419,12 +419,24 @@ export interface TradingLiveFill {
 }
 
 export interface TradingLiveFinding {
+  id: string;
   code: string;
   severity: string;
   group: string;
+  field: string | null;
   position_id: string | null;
   entry_id: string | null;
   symbol: string | null;
+  side: string | null;
+  opened_ms: number | null;
+  closed_ms: number | null;
+  venue_source: string | null;
+  other_source: string;
+  journal: string | null;
+  basis: string | null;
+  fill_ids: string[];
+  period_from_ms: number | null;
+  period_to_ms: number | null;
   venue_value: number | null;
   other_value: number | null;
   difference: number | null;
@@ -554,6 +566,8 @@ export interface TradingLiveSource {
   read_ms: number | null;
   last_sync_ms: number | null;
   last_import_ms: number | null;
+  /** real / synthetic / unknown — synthetic = generated demo data, never the account */
+  origin: string;
   warnings: string[];
 }
 
