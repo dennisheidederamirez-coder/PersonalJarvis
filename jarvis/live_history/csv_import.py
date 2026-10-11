@@ -450,7 +450,7 @@ def _read_text(path: Path, report: ImportReport) -> str:
         raise ImportRefused(IssueCode.NOT_TEXT)
     try:
         text = blob.decode("utf-8-sig")
-    except UnicodeDecodeError:
+    except UnicodeDecodeError:  # read as cp1252 and reported (encoding_fallback)
         # Spreadsheet programs on Windows still save CSV as cp1252.
         text = blob.decode("cp1252", errors="strict")
         report.encoding = "cp1252"
@@ -464,7 +464,7 @@ def _delimiter(text: str) -> str:
     sample = text[:8192]
     try:
         return csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
-    except csv.Error:
+    except csv.Error:  # no clear delimiter: a comma; a wrong guess shows as missing columns
         return ","
 
 

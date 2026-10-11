@@ -201,7 +201,7 @@ describe("TradingDeskView — LIVE history", () => {
     await openLive();
     fireEvent.mouseDown(screen.getByTestId("live-tab-reconciliation"));
     const tab = await screen.findByTestId("live-reconciliation");
-    expect(within(tab).getByText("Gebühr weicht ab")).toBeTruthy();
+    expect(within(tab).getByText("Gebühr weicht ab")).toBeTruthy(); // i18n-allow: asserts the German default UI text
     expect(within(tab).getByText(/Kontostandsänderung ohne Trade/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
     expect(within(tab).getByText(/keine unabhängige/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
   });
@@ -223,7 +223,7 @@ describe("TradingDeskView — LIVE history", () => {
     });
     await openLive();
     const notice = await screen.findByTestId("live-source-notice");
-    expect(notice.textContent).toContain("Kein LIVE-Archiv gefunden");
+    expect(notice.textContent).toContain("Kein LIVE-Archiv gefunden"); // i18n-allow: asserts the German default UI text
     expect(notice.textContent).toContain("live_history.sqlite");
     expect(screen.queryByTestId("live-overview")).toBeNull();
   });
@@ -239,6 +239,6 @@ describe("TradingDeskView — LIVE history", () => {
     });
     await openLive();
     const list = await screen.findByTestId("live-warnings");
-    expect(within(list).getByText(/keine automatische Synchronisierung/)).toBeTruthy();
+    expect(within(list).getByText(/keine automatische Synchronisierung/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
   });
 });

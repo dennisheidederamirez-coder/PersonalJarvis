@@ -519,8 +519,7 @@ def reconciliation(ctx: LiveContext, *, journal: str | None = None) -> s.LiveRec
 def _import(snap: LiveSnapshot, run: Any) -> s.LiveImport:
     try:
         detail = json.loads(run.detail) if run.detail else {}
-    except ValueError:
-        # A detail this version did not write: show the run without it.
+    except ValueError:  # a detail this version did not write: shown without it
         detail = {}
     if not isinstance(detail, dict):
         detail = {}

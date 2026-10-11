@@ -117,7 +117,7 @@ class LiveArchiveReader:
         for attempt in range(_RETRIES):
             try:
                 return self._read_once(mtime_ms, size)
-            except _NotLive as exc:
+            except _NotLive as exc:  # reported as SourceState.INVALID
                 return ReadFailure(path, SourceState.INVALID, str(exc))
             except sqlite3.OperationalError as exc:
                 text = str(exc)
