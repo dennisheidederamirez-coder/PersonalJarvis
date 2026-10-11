@@ -11,6 +11,10 @@ What it guarantees:
   requests, what changed, how it ended); every revision names its run; the
   time windows a run fetched completely are recorded as coverage, so gaps —
   and therefore what a backfill must fetch — are computable.
+- **Imports are traceable too.** A CSV import is a run of kind ``import``;
+  each row it could not use is an issue (line, code, field — never the
+  cell's content). Entries of an external journal live in their own table,
+  keyed per journal, and are never mixed with the venue's records.
 - **LIVE only.** ``lh_meta.mode`` is ``live`` from creation on, opening a file
   that holds a paper journal (``trading_journal``) is refused, and the paper
   dashboard's reader rejects this file in turn.
@@ -24,11 +28,14 @@ open it concurrently.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
@@ -38,9 +45,11 @@ from jarvis.live_history.models import (
     Position,
     Record,
     content_hash,
+    decimal_text,
     from_data,
     to_data,
 )
+from jarvis.live_history.reconcile import JournalEntry, PnlBasis
 
 SCHEMA_VERSION: Final = 1
 MODE: Final = "live"
@@ -106,6 +115,26 @@ CREATE TABLE IF NOT EXISTS lh_coverage (
     CHECK (to_ms > from_ms)
 );
 CREATE INDEX IF NOT EXISTS lh_coverage_stream ON lh_coverage (venue, account, stream, from_ms);
+CREATE TABLE IF NOT EXISTS lh_import_issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    line INTEGER,
+    code TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    field TEXT
+);
+CREATE INDEX IF NOT EXISTS lh_import_issues_run ON lh_import_issues (run_id);
+CREATE TABLE IF NOT EXISTS lh_journal_entries (
+    journal TEXT NOT NULL,
+    entry_key TEXT NOT NULL,
+    opened_ms INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    first_seen_ms INTEGER NOT NULL,
+    last_seen_ms INTEGER NOT NULL,
+    last_run_id INTEGER NOT NULL,
+    PRIMARY KEY (journal, entry_key)
+);
 """
 
 #: Tables of a paper-trading journal; their presence means "wrong file".
@@ -321,14 +350,23 @@ class LiveArchive:
         old_hash, old_data = row
         self._conn.execute(
             "UPDATE lh_records SET symbol = ?, sort_ms = ?, data = ?, content_hash = ?,"
-            " last_seen_ms = ?, last_run_id = ?"
+            " last_seen_ms = ?, last_run_id = ?, source = ?"
             " WHERE venue = ? AND account = ? AND entity = ? AND record_key = ?",
-            (_symbol(record), record.sort_ms(), data, new_hash, now_ms, run_id, *ident),
+            (_symbol(record), record.sort_ms(), data, new_hash, now_ms, run_id, source, *ident),
         )
         if old_hash == new_hash:
             return Outcome.UNCHANGED
         self._revision(ident, run_id, now_ms, old_hash, new_hash, data)
         return Outcome.UPDATED
+
+    def stored(self, record: Record) -> tuple[Record, str] | None:
+        """The stored copy of ``record`` and the source of its last write, if any."""
+        row = self._conn.execute(
+            "SELECT data, source FROM lh_records"
+            " WHERE venue = ? AND account = ? AND entity = ? AND record_key = ?",
+            (record.venue, record.account, record.entity.value, record.key()),
+        ).fetchone()
+        return None if row is None else (from_data(record.entity, json.loads(row[0])), row[1])
 
     def _revision(
         self,
@@ -428,6 +466,88 @@ class LiveArchive:
                 merged.append((lo, hi))
         return merged
 
+    # ------------------------------------------------------------ import issues
+
+    def add_issues(
+        self, run_id: int, issues: list[tuple[int | None, str, str, str | None]]
+    ) -> None:
+        """``(line, code, severity, field)`` per issue — never a cell's content."""
+        self._conn.executemany(
+            "INSERT INTO lh_import_issues (run_id, line, code, severity, field)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [(run_id, *issue) for issue in issues],
+        )
+
+    def issues(self, run_id: int) -> list[tuple[int | None, str, str, str | None]]:
+        rows = self._conn.execute(
+            "SELECT line, code, severity, field FROM lh_import_issues WHERE run_id = ? ORDER BY id",
+            (run_id,),
+        ).fetchall()
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+    # ---------------------------------------------------------- journal entries
+
+    def upsert_journal(
+        self, journal: str, key: str, entry: JournalEntry, *, run_id: int, now_ms: int
+    ) -> Outcome:
+        data = json.dumps(journal_to_data(entry), sort_keys=True, separators=(",", ":"))
+        new_hash = hashlib.sha256(data.encode()).hexdigest()
+        row = self._conn.execute(
+            "SELECT content_hash FROM lh_journal_entries WHERE journal = ? AND entry_key = ?",
+            (journal, key),
+        ).fetchone()
+        if row is None:
+            self._conn.execute(
+                "INSERT INTO lh_journal_entries (journal, entry_key, opened_ms, data,"
+                " content_hash, first_seen_ms, last_seen_ms, last_run_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (journal, key, entry.opened_ms, data, new_hash, now_ms, now_ms, run_id),
+            )
+            return Outcome.INSERTED
+        self._conn.execute(
+            "UPDATE lh_journal_entries SET opened_ms = ?, data = ?, content_hash = ?,"
+            " last_seen_ms = ?, last_run_id = ? WHERE journal = ? AND entry_key = ?",
+            (entry.opened_ms, data, new_hash, now_ms, run_id, journal, key),
+        )
+        return Outcome.UNCHANGED if row[0] == new_hash else Outcome.UPDATED
+
+    def journal_entries(self, journal: str) -> list[JournalEntry]:
+        rows = self._conn.execute(
+            "SELECT data FROM lh_journal_entries WHERE journal = ? ORDER BY opened_ms, entry_key",
+            (journal,),
+        ).fetchall()
+        return [journal_from_data(json.loads(r[0])) for r in rows]
+
+    def journals(self) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT journal FROM lh_journal_entries ORDER BY journal"
+        ).fetchall()
+        return [r[0] for r in rows]
+
+
+def journal_to_data(entry: JournalEntry) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for f in dataclasses.fields(entry):
+        value = getattr(entry, f.name)
+        if isinstance(value, Decimal):
+            value = decimal_text(value)
+        elif isinstance(value, PnlBasis):
+            value = value.value
+        out[f.name] = value
+    return out
+
+
+def journal_from_data(data: dict[str, Any]) -> JournalEntry:
+    kwargs: dict[str, Any] = {}
+    for f in dataclasses.fields(JournalEntry):
+        value = data.get(f.name)
+        if f.name == "pnl_basis":
+            value = PnlBasis(value or PnlBasis.NET)
+        elif value is not None and "Decimal" in str(f.type):
+            value = Decimal(value)
+        kwargs[f.name] = value
+    return JournalEntry(**kwargs)
+
 
 def gaps(covered: list[tuple[int, int]], lo: int, hi: int) -> list[tuple[int, int]]:
     """The parts of ``[lo, hi)`` that ``covered`` (merged, sorted) leaves open."""
@@ -470,4 +590,6 @@ __all__ = [
     "SyncRun",
     "describe",
     "gaps",
+    "journal_from_data",
+    "journal_to_data",
 ]

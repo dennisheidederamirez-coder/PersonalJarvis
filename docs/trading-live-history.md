@@ -4,9 +4,12 @@ A durable local archive of the owner's REAL exchange history, filled through
 a read-only, allow-listed venue client, plus checks that compare it with
 itself, with an external trading journal and with the account balance.
 
-**Status: phases 1–2, offline only.** The client can reach nothing but a
-simulated venue; there are no real credentials, no live sync, no scheduler
-job and no UI yet. LIVE data is kept strictly apart from the paper test.
+**Status: phases 1–4, offline only.** The client can reach nothing but a
+simulated venue; there are no real credentials, no live sync and no
+scheduler job. CSV exports can be imported (phase 3) and the trading
+dashboard has a separate, read-only LIVE view (phase 4, see
+`docs/trading-dashboard.md`). All tests and samples use synthetic data. LIVE
+data is kept strictly apart from the paper test.
 
 ## Sources and roles
 
@@ -31,7 +34,8 @@ exchange the *primary venue* (`venue = "primary"`).
 | `sync.py` | One sync run (dry run or apply), incremental windows, the backfill planner |
 | `reconcile.py` | Venue-internal checks, journal matching and comparison, balance check |
 | `simulated_venue.py` | The simulated venue: documented endpoints over synthetic, deterministic data |
-| `__main__.py` | `python -m jarvis.live_history sync --simulated` · `status` · `plan-backfill` |
+| `csv_import.py` | Import of the venue's position/trade exports and an external journal's export |
+| `__main__.py` | `python -m jarvis.live_history sync --simulated` · `import` · `status` · `plan-backfill` |
 
 The package imports neither `jarvis.trading` nor `jarvis.market_data` (the
 paper job pins their source by hash) nor any model SDK; a test enforces it.
@@ -46,7 +50,12 @@ a paper journal, and the paper dashboard's reader rejects it (`invalid`).
 | `lh_records` | The current version of every record, keyed by `(venue, account, entity, venue id)` |
 | `lh_revisions` | Every meaningful change of a record, with its run and the full record — so a position's state at any time is recoverable |
 | `lh_sync_runs` | Each run: kind (`sync`/`backfill`), source, start/end, status (`ok`/`partial`/`failed`), requests, inserted/updated/unchanged/rejected, error kind |
-| `lh_coverage` | The time windows a run fetched completely, per stream |
+| `lh_coverage` | The time windows a run fetched (or an import declared) completely, per stream |
+| `lh_import_issues` | Per import run: line, code, severity and field of every row it could not use — never a cell's content |
+| `lh_journal_entries` | Entries of an external journal, keyed per journal; never mixed with the venue's records |
+
+`lh_records.source` names the source of the last write (`simulated`, later
+the real API, or `csv:<kind>:<digest>`).
 
 **Duplicates.** Fetching a record again is `unchanged`; only a change in its
 meaning (status, fee, funding, close price …) is `updated` and leaves a
@@ -103,6 +112,41 @@ first run looks back 90 days.
 import phase). `api_windows(plan)` turns the plan into sync windows; a
 backfill is an ordinary run with `kind = "backfill"`.
 
+## CSV import (phase 3)
+
+```
+python -m jarvis.live_history import --archive PATH --file CSV --kind positions|fills|journal \
+    [--tz Europe/Berlin] [--pnl-basis gross|net_of_fees|net] [--map field=Header ...] \
+    [--decimal comma|point] [--fee-sign auto|cost_positive|cost_negative] \
+    [--funding-sign received_positive|paid_positive] [--journal NAME] [--covers FROM TO] [--dry-run]
+```
+
+The real export formats of the exchange and of the external journal are
+**not known yet**: the importer finds columns by broad header aliases, and
+`--map` assigns any header to a field. The synthetic samples
+(`tests/fakes/fake_live_exports.py`) cover an API-named style and a
+spreadsheet style (semicolons, decimal commas, local times, negative fees,
+net P/L). An anonymized real sample is needed before the first real import.
+
+What the importer checks:
+
+| Topic | Rule |
+|---|---|
+| Duplicates | Keyed by the venue's id (required for venue exports; a journal without ids gets a stable digest). Same id twice in a file: identical → skipped (`duplicate_in_file`), different → both rejected (`conflicting_duplicate`). Re-importing a file changes nothing (`already_imported`) |
+| API is primary | A row never overwrites a record the API delivered; a differing row is reported (`conflicts_with_api`). Fields a file leaves empty (liquidation size, leverage, reduce-only …) keep the stored value; a time in whole seconds does not overwrite the same second's milliseconds |
+| Times | Epoch s/ms or ISO 8601 with offset; zoneless times need `--tz` (else the file is refused, `timezone_required`). Non-existent local times rejected, doubled ones flagged; before 2017, in the future, or closed before opened → rejected |
+| Numbers | Exact decimals; decimal mark from the delimiter (`;` → comma) or `--decimal`; thousands separators only in strict groups, so `12,5` in a point file is rejected rather than read as 125 |
+| Fees | Stored as a positive cost; all-negative fees are flipped (`fee_sign_flipped`), mixed signs are flagged; a fee in another currency is rejected |
+| Funding | Signed, negative = paid; `--funding-sign paid_positive` for the opposite convention; a missing funding column is flagged |
+| P/L definitions | Converted to the venue's realized P/L (excluding fees and funding) from the file's basis — declared, or inferred from prices, fees and funding when ≥ 80 % of the distinguishable rows fit one basis (`pnl_basis_inferred`); a declared basis the rows contradict is flagged (`pnl_basis_doubtful`); otherwise refused (`pnl_basis_required`). Net P/L without funding is refused for positions. Fills carry no prices to infer from: their basis must be declared |
+| Missing data | Required values missing → the row is rejected with line, code and field |
+| Safety | Read-only; ≤ 20 MB, ≤ 200 000 rows, ≤ 64 columns, ≤ 256 characters per cell; text fields accept a narrow character set (no spreadsheet formulas); UTF-8, falling back to Windows-1252 with a warning |
+
+Every import is a run (`kind = import`); a refused file leaves a `failed`
+run with the reason. `--covers FROM TO` records coverage for the stream only
+when the import was clean, so the backfill plan stops listing that span.
+`--dry-run` reports the same result and writes nothing.
+
 ## Reconciliation
 
 All findings have a stable code (`reconcile.Code`) for later translation:
@@ -125,7 +169,13 @@ All findings have a stable code (`reconcile.Code`) for later translation:
 
 ## Tests
 
-`tests/unit/live_history/` — 63 tests, offline, against the simulated venue:
+`tests/unit/live_history/test_csv_import.py` — number and time parsing,
+column aliases and mapping, export vs API equality, the API-is-primary rule,
+localized exports, duplicates, rejected rows without content leaks, fee and
+funding signs, all P/L bases, file limits, encoding, coverage, the journal
+import with every reconciliation code, and the CLI.
+
+`tests/unit/live_history/` (phases 1–2) — 63 tests, offline, against the simulated venue:
 signing, allow-list and GET-only guard, simulated-hosts-only, pacing, retries,
 auth and rejection handling without leaks, archive keys/duplicates/revisions,
 the PAPER/LIVE wall in both directions, dry run byte-identical, coverage and
@@ -134,10 +184,9 @@ backfill planning and execution, the CLI, and every reconciliation code.
 
 ## Open points for later phases (each needs the owner's go)
 
-- **Phase 3:** CSV import for the exchange's position-history export and for
-  the external journal (needs an anonymized sample file).
-- **Phase 4:** dashboard LIVE mode on the existing trading dashboard
-  (separate GET routes, same reader discipline, never mixed with PAPER).
+- **Before a real import:** an anonymized sample of the exchange's export and,
+  if one exists, of the external journal's export, to confirm the column
+  names, the P/L definition and the fee/funding sign conventions.
 - **Phase 5:** the owner creates a **read-only** key (with IP binding if the
   exchange offers it) and enters it in a hidden prompt; it is stored only in
   the OS keyring. One manual sync, checked against the exchange's own UI.

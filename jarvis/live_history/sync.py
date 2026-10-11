@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -354,12 +354,23 @@ def plan_backfill(
     archive: LiveArchive, *, venue: str, account: str, since_ms: int, now_ms: int
 ) -> list[BackfillWindow]:
     """What is missing since ``since_ms``, and how each piece can still be filled."""
+    coverage = {
+        stream.value: archive.coverage(venue=venue, account=account, stream=stream)
+        for stream in Stream
+    }
+    return plan_gaps(coverage, since_ms=since_ms, until_ms=now_ms, now_ms=now_ms)
+
+
+def plan_gaps(
+    coverage: Mapping[str, list[tuple[int, int]]], *, since_ms: int, until_ms: int, now_ms: int
+) -> list[BackfillWindow]:
+    """``plan_backfill`` over given coverage (merged intervals per stream), up to ``until_ms``."""
     out: list[BackfillWindow] = []
     for stream in Stream:
-        covered = archive.coverage(venue=venue, account=account, stream=stream)
+        covered = coverage.get(stream.value, [])
         retention = RETENTION_MS[stream]
         floor = now_ms - retention + HOUR_MS if retention is not None else None
-        for lo, hi in gaps(covered, since_ms, now_ms):
+        for lo, hi in gaps(covered, since_ms, until_ms):
             if floor is not None and lo < floor:
                 out.append(BackfillWindow(stream, lo, min(hi, floor), "export", "beyond_retention"))
                 lo = floor
@@ -409,4 +420,5 @@ __all__ = [
     "Window",
     "api_windows",
     "plan_backfill",
+    "plan_gaps",
 ]

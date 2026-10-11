@@ -180,11 +180,11 @@ def to_data(record: Record) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for f in dataclasses.fields(record):
         value = getattr(record, f.name)
-        out[f.name] = _decimal_text(value) if isinstance(value, Decimal) else value
+        out[f.name] = decimal_text(value) if isinstance(value, Decimal) else value
     return out
 
 
-def _decimal_text(value: Decimal) -> str:
+def decimal_text(value: Decimal) -> str:
     text = format(value.normalize(), "f")
     return "0" if text == "-0" else text
 
@@ -216,6 +216,7 @@ __all__ = [
     "Position",
     "Record",
     "content_hash",
+    "decimal_text",
     "from_data",
     "to_data",
 ]
