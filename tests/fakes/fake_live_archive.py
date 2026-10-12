@@ -10,17 +10,24 @@ Built only from a ``SimulatedVenue`` — no real account, no network:
    venue-internal check has something to find);
 4. an import that failed on a few rows, and an external journal with named
    differences (one trade missing, one extra, one fee, one P/L, one funding).
+
+With ``web_exports`` the venue's web exports (no ids) are imported as well:
+the position export BEFORE the first sync — so the API later delivers the
+same positions with ids and the dashboard pairs the copies — with two rows
+whose stated net contradicts their components and one fee that differs from
+the API; the fill export after the syncs, as daily totals, with one row
+written twice.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
 from jarvis.live_history.archive import LiveArchive
-from jarvis.live_history.csv_import import ImportKind, ImportOptions, import_csv
+from jarvis.live_history.csv_import import ImportKind, ImportOptions, Layout, import_csv
 from jarvis.live_history.reconcile import PnlBasis
 from jarvis.live_history.simulated_venue import DAY_MS, SimulatedVenue
 from jarvis.live_history.sync import FIRST_LOOKBACK_MS, SyncService
@@ -29,6 +36,8 @@ from tests.fakes.fake_live_exports import (
     journal_csv,
     venue_fills_csv,
     venue_positions_csv,
+    web_fills_csv,
+    web_positions_csv,
 )
 from tests.fakes.fake_live_venue import NOW_MS, FakeTime, make_client
 
@@ -43,6 +52,8 @@ class DemoArchive:
     #: position ids the journal was given differences for, by finding code
     journal_changes: dict[str, str]
     doctored_fill_position: str
+    #: web exports only: position ids by the difference built into them
+    web_changes: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 async def _sync(venue: SimulatedVenue, archive: LiveArchive, at_ms: int) -> None:
@@ -57,7 +68,14 @@ async def _sync(venue: SimulatedVenue, archive: LiveArchive, at_ms: int) -> None
     ).run()
 
 
-def build_demo_archive(directory: Path, now_ms: int = NOW_MS) -> DemoArchive:
+#: Built into the web position export (stated net − components; fee added).
+WEB_NET_OFFSETS: tuple[Decimal, ...] = (Decimal("0.37"), Decimal("-44.48"))
+WEB_FEE_OFFSET = Decimal("0.25")
+
+
+def build_demo_archive(
+    directory: Path, now_ms: int = NOW_MS, *, web_exports: bool = False
+) -> DemoArchive:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "live_history.sqlite"
     for f in directory.glob("live_history.sqlite*"):
@@ -65,7 +83,30 @@ def build_demo_archive(directory: Path, now_ms: int = NOW_MS) -> DemoArchive:
     t0 = now_ms - 6 * DAY_MS
     venue = SimulatedVenue(now_ms=t0, days=150, closed_positions=36)
     archive = LiveArchive.open(path, now_ms=t0, origin="synthetic")
+    web_changes: dict[str, tuple[str, ...]] = {}
     try:
+        if web_exports:
+            # the web export first: the API delivers the same positions later
+            closed_now = sorted(venue.history, key=lambda p: int(p["ctime"]))
+            recent_ids = [str(p["positionId"]) for p in closed_now[-12:]]
+            web_changes = {
+                "export_pnl_inconsistent": (recent_ids[1], recent_ids[5]),
+                "export_differs_from_api": (recent_ids[3],),
+            }
+            import_csv(
+                archive,
+                web_positions_csv(
+                    venue,
+                    directory / "web_positions.csv",
+                    net_offset=dict(
+                        zip(web_changes["export_pnl_inconsistent"], WEB_NET_OFFSETS, strict=True)
+                    ),
+                    fee_offset={recent_ids[3]: WEB_FEE_OFFSET},
+                    cross={recent_ids[7]},
+                ),
+                ImportOptions(ImportKind.POSITIONS, layout=Layout.WEB_EXPORT),
+                now_ms=lambda: t0 - 60_000,
+            )
         asyncio.run(_sync(venue, archive, t0))
         venue.now_ms = t0 + 2 * DAY_MS
         venue.close_open_position(t0 + DAY_MS, Decimal("61250"))
@@ -138,6 +179,13 @@ def build_demo_archive(directory: Path, now_ms: int = NOW_MS) -> DemoArchive:
             ImportOptions(ImportKind.JOURNAL),
             now_ms=lambda: at + 180_000,
         )
+        if web_exports:
+            import_csv(
+                archive,
+                web_fills_csv(venue, directory / "web_fills.csv", repeat=1),
+                ImportOptions(ImportKind.FILLS, layout=Layout.WEB_EXPORT),
+                now_ms=lambda: at + 240_000,
+            )
     finally:
         archive.close()
     return DemoArchive(
@@ -151,7 +199,14 @@ def build_demo_archive(directory: Path, now_ms: int = NOW_MS) -> DemoArchive:
             "funding_mismatch": recent[6],
         },
         doctored_fill_position=str(target["positionId"]),
+        web_changes=web_changes,
     )
 
 
-__all__ = ["DEPOSIT", "DemoArchive", "build_demo_archive"]
+__all__ = [
+    "DEPOSIT",
+    "WEB_FEE_OFFSET",
+    "WEB_NET_OFFSETS",
+    "DemoArchive",
+    "build_demo_archive",
+]

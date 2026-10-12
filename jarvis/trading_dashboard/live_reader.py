@@ -13,6 +13,10 @@ file that is never mixed with it:
    then the connection closes. A sync or import waits at most 5 s for it.
 3. **Bounded waiting.** A few short retries while a writer commits, then
    ``busy``.
+4. **One copy per position.** A position imported from an export without ids
+   (derived id ``x:…``) that the API has delivered too — same symbol, side
+   and opening second — is shown once, as the API's copy; the export's copy
+   is kept aside in ``twins`` for the reconciliation to compare.
 
 Snapshots are cached on the file's (mtime, size); nothing writes the archive
 unless a person runs a sync or an import.
@@ -29,8 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from jarvis.live_history.archive import MODE, LiveArchive, SyncRun
-from jarvis.live_history.models import Balance, Entity, Fill, Position
+from jarvis.live_history.archive import MODE, LiveArchive, RecordCheck, SyncRun
+from jarvis.live_history.models import Balance, Entity, Fill, FillTotal, Position, is_derived
 from jarvis.live_history.reconcile import JournalEntry
 from jarvis.live_history.sync import Stream
 from jarvis.trading_dashboard.reader import ReadFailure, SourceState
@@ -76,6 +80,14 @@ class LiveSnapshot:
     coverage: dict[str, list[tuple[int, int]]]
     journals: dict[str, tuple[JournalEntry, ...]]
     truncated: bool = False
+    #: self-contradictions of a source, per record (e.g. stated net ≠ components)
+    checks: tuple[RecordCheck, ...] = ()
+    #: daily fill totals from exports without trade ids
+    fill_totals: tuple[FillTotal, ...] = ()
+    #: the API's position id → the same position as an export without ids gave it
+    twins: dict[str, Position] = field(default_factory=dict)
+    #: a derived id that was folded into the API's copy → that copy's id
+    aliases: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -187,11 +199,20 @@ class LiveArchiveReader:
             return list(out)
 
         positions = tuple(p for p in records(Entity.POSITION) if isinstance(p, Position))
+        positions, twins = _fold_twins(positions)
+        aliases = {p.position_id: api for api, p in twins.items()}
         fills = tuple(f for f in records(Entity.FILL) if isinstance(f, Fill))
         balances = tuple(b for b in records(Entity.BALANCE) if isinstance(b, Balance))[
             -MAX_BALANCES:
         ]
-        positions_at = tuple(archive.positions_as_of(b.ts_ms, venue=v, account=a) for b in balances)
+        positions_at = tuple(
+            {
+                k: p
+                for k, p in archive.positions_as_of(b.ts_ms, venue=v, account=a).items()
+                if k not in aliases
+            }
+            for b in balances
+        )
         sources = {
             (str(e), str(k)): str(s)
             for e, k, s in conn.execute(
@@ -208,6 +229,10 @@ class LiveArchiveReader:
         journals: dict[str, tuple[JournalEntry, ...]] = {}
         if "lh_journal_entries" in tables:
             journals = {j: tuple(archive.journal_entries(j)) for j in archive.journals()}
+        checks = tuple(archive.checks(venue=v, account=a)) if "lh_record_checks" in tables else ()
+        totals = (
+            tuple(archive.fill_totals(venue=v, account=a)) if "lh_fill_totals" in tables else ()
+        )
         created = meta.get("created_ms")
         return LiveSnapshot(
             path=str(self.path),
@@ -229,7 +254,35 @@ class LiveArchiveReader:
             coverage=coverage,
             journals=journals,
             truncated=truncated,
+            checks=checks,
+            fill_totals=totals,
+            twins=twins,
+            aliases=aliases,
         )
+
+
+def _fold_twins(
+    positions: tuple[Position, ...],
+) -> tuple[tuple[Position, ...], dict[str, Position]]:
+    """Drop an export's copy (derived id) of a position the API delivered too.
+
+    Paired only when exactly one API position has the same symbol, side and
+    opening second; otherwise both stay visible and nothing is guessed.
+    """
+    seen: dict[tuple[str, str, int], list[str]] = {}
+    for p in positions:
+        if not is_derived(p.position_id):
+            seen.setdefault((p.symbol, p.side, p.opened_ms // 1000), []).append(p.position_id)
+    twins: dict[str, Position] = {}
+    kept: list[Position] = []
+    for p in positions:
+        if is_derived(p.position_id):
+            match = seen.get((p.symbol, p.side, p.opened_ms // 1000), [])
+            if len(match) == 1 and match[0] not in twins:
+                twins[match[0]] = p
+                continue
+        kept.append(p)
+    return tuple(kept), twins
 
 
 class _NotLive(Exception):

@@ -7,13 +7,16 @@ from decimal import Decimal
 from pathlib import Path
 
 from jarvis.live_history.archive import LiveArchive
-from jarvis.live_history.models import Balance, Entity, Fill, Position
+from jarvis.live_history.models import Balance, Entity, Fill, FillTotal, Position
 from jarvis.live_history.reconcile import (
     Code,
     JournalEntry,
     PnlBasis,
     check_balance,
+    check_fill_totals,
     check_internal,
+    compare_twin,
+    day_start_ms,
     match,
     reconcile_journal,
 )
@@ -238,3 +241,65 @@ async def test_balance_change_is_explained_by_the_trades(tmp_path: Path) -> None
     [finding] = check_balance(before, deposit, p_before, p_after)
     assert finding.code is Code.UNEXPLAINED_BALANCE_CHANGE
     assert finding.difference == Decimal("250")
+
+
+# ------------------------------------------------------------------ exports
+
+
+def _closed(pid: str, symbol: str, closed_ms: int, realized: str, fee: str = "0.5") -> Position:
+    return Position(
+        "primary", "main", pid, symbol, "long", "closed", Decimal("1"), Decimal("100"),
+        Decimal("101"), Decimal(fee), Decimal(0), Decimal(realized), None, None, None, None,
+        closed_ms - 3_600_000, closed_ms,
+    )  # fmt: skip
+
+
+def _total(day: str, realized: str, *, complete: bool = True) -> FillTotal:
+    return FillTotal(
+        "primary", "main", day, "BTCUSDT", 1, 0, 1, Decimal("0.1"), Decimal(realized), complete
+    )
+
+
+def test_compare_twin_names_each_differing_field() -> None:
+    api = _closed("P1", "BTCUSDT", NOW_MS, "2.0")
+    assert compare_twin(api, replace(api, position_id="x:1")) == []
+    found = compare_twin(api, replace(api, fee=Decimal("0.75"), close_price=Decimal("102")))
+    assert {(f.code, f.field) for f in found} == {
+        (Code.EXPORT_DIFFERS_FROM_API, "fee"),
+        (Code.EXPORT_DIFFERS_FROM_API, "close_price"),
+    }
+    (fee,) = [f for f in found if f.field == "fee"]
+    assert fee.position_id == "P1" and fee.difference == Decimal("-0.25")
+
+
+def test_fill_totals_without_fill_coverage_compare_closed_positions_per_run() -> None:
+    d1 = day_start_ms("2026-09-02")
+    totals = [
+        _total("2026-09-01", "0", complete=False),
+        _total("2026-09-02", "5"),
+        _total("2026-09-03", "1"),
+        _total("2026-09-04", "9", complete=False),
+    ]
+    positions = [
+        _closed("P1", "BTCUSDT", d1 + 3_600_000, "5"),
+        _closed("P2", "BTCUSDT", d1 + DAY_MS + 60_000, "1.5"),  # the export says 1
+        _closed("P3", "BTCUSDT", d1 + 2 * DAY_MS + 60_000, "7"),  # an edge day: not compared
+    ]
+    (f,) = check_fill_totals(totals, [], [], positions)
+    assert f.code is Code.FILL_TOTALS_MISMATCH and f.field == "realized"
+    assert f.position_id is None and f.symbol == "BTCUSDT"
+    assert f.period == (d1, d1 + 2 * DAY_MS)  # the two complete days, one run
+    assert (f.venue_value, f.other_value) == (Decimal("6.5"), Decimal("6"))
+
+
+def test_fill_totals_on_covered_days_compare_the_archived_fills() -> None:
+    d1 = day_start_ms("2026-09-02")
+    total = FillTotal(
+        "primary", "main", "2026-09-02", "BTCUSDT", 1, 0, 1, Decimal("0.6"), Decimal("2"), True
+    )
+    fill = Fill(
+        "primary", "main", "T1", "O1", "P1", "BTCUSDT", "sell", Decimal("1"), Decimal("101"),
+        Decimal("0.3"), Decimal("2"), "taker", False, None, d1 + 60_000,
+    )  # fmt: skip
+    (f,) = check_fill_totals([total], [fill], [(d1, d1 + DAY_MS)], [])
+    assert f.field == "fee" and f.difference == Decimal("-0.3") and f.position_id is None

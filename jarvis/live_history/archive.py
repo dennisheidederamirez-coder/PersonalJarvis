@@ -15,6 +15,11 @@ What it guarantees:
   each row it could not use is an issue (line, code, field — never the
   cell's content). Entries of an external journal live in their own table,
   keyed per journal, and are never mixed with the venue's records.
+- **Exports without ids stay recognisable.** A position whose export has no
+  id gets a derived one (``x:…``); a check its own numbers fail (stated net
+  ≠ gross − fee + funding) is kept per position in ``lh_record_checks``; an
+  export of fills without trade ids is kept only as daily totals
+  (``lh_fill_totals``), never as fills.
 - **Real and synthetic never mix.** ``lh_meta.origin`` (``real`` or
   ``synthetic``) is fixed at creation; opening the archive for the other
   origin is refused, and the dashboard labels a synthetic archive as demo
@@ -45,7 +50,9 @@ from pathlib import Path
 from typing import Any, Final
 
 from jarvis.live_history.models import (
+    DERIVED_PREFIX,
     Entity,
+    FillTotal,
     Position,
     Record,
     content_hash,
@@ -139,6 +146,30 @@ CREATE TABLE IF NOT EXISTS lh_journal_entries (
     last_run_id INTEGER NOT NULL,
     PRIMARY KEY (journal, entry_key)
 );
+CREATE TABLE IF NOT EXISTS lh_record_checks (
+    venue TEXT NOT NULL,
+    account TEXT NOT NULL,
+    entity TEXT NOT NULL,
+    record_key TEXT NOT NULL,
+    code TEXT NOT NULL,
+    stated TEXT NOT NULL,
+    derived TEXT NOT NULL,
+    line INTEGER,
+    run_id INTEGER NOT NULL,
+    PRIMARY KEY (venue, account, entity, record_key, code)
+);
+CREATE TABLE IF NOT EXISTS lh_fill_totals (
+    venue TEXT NOT NULL,
+    account TEXT NOT NULL,
+    day TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    complete INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    run_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    PRIMARY KEY (venue, account, day, symbol)
+);
 """
 
 #: Tables of a paper-trading journal; their presence means "wrong file".
@@ -186,6 +217,19 @@ class SyncRun:
     rejected: int
     error_code: str | None
     detail: str
+
+
+@dataclass(frozen=True)
+class RecordCheck:
+    """A record whose source contradicts itself, e.g. stated net ≠ its own components."""
+
+    entity: str
+    record_key: str
+    code: str
+    stated: Decimal
+    derived: Decimal
+    line: int | None
+    run_id: int
 
 
 @dataclass(frozen=True)
@@ -467,6 +511,101 @@ class LiveArchive:
             out[key] = rec
         return out
 
+    def position_twin(
+        self, *, venue: str, account: str, symbol: str, side: str, opened_ms: int
+    ) -> str | None:
+        """The id of the one venue-keyed position with this symbol and side opened in
+        the same second, or ``None`` (none, or more than one: nothing is guessed)."""
+        lo = opened_ms // 1000 * 1000
+        rows = self._conn.execute(
+            "SELECT record_key, data FROM lh_records WHERE venue = ? AND account = ?"
+            " AND entity = ? AND symbol = ? AND sort_ms >= ? AND sort_ms < ?"
+            " AND substr(record_key, 1, ?) != ?",
+            (
+                venue,
+                account,
+                Entity.POSITION.value,
+                symbol,
+                lo,
+                lo + 1000,
+                len(DERIVED_PREFIX),
+                DERIVED_PREFIX,
+            ),
+        ).fetchall()
+        keys = [k for k, data in rows if json.loads(data).get("side") == side]
+        return keys[0] if len(keys) == 1 else None
+
+    # ------------------------------------------------------------ record checks
+
+    def set_check(
+        self,
+        *,
+        venue: str,
+        account: str,
+        entity: Entity,
+        record_key: str,
+        code: str,
+        stated: Decimal | None,
+        derived: Decimal | None = None,
+        line: int | None = None,
+        run_id: int,
+    ) -> None:
+        """Record (``stated`` given) or clear (``stated`` None) one check of a record."""
+        ident = (venue, account, entity.value, record_key, code)
+        if stated is None or derived is None:
+            self._conn.execute(
+                "DELETE FROM lh_record_checks WHERE venue = ? AND account = ? AND entity = ?"
+                " AND record_key = ? AND code = ?",
+                ident,
+            )
+            return
+        self._conn.execute(
+            "INSERT OR REPLACE INTO lh_record_checks (venue, account, entity, record_key, code,"
+            " stated, derived, line, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (*ident, decimal_text(stated), decimal_text(derived), line, run_id),
+        )
+
+    def checks(self, *, venue: str, account: str) -> list[RecordCheck]:
+        rows = self._conn.execute(
+            "SELECT entity, record_key, code, stated, derived, line, run_id FROM lh_record_checks"
+            " WHERE venue = ? AND account = ? ORDER BY entity, record_key, code",
+            (venue, account),
+        ).fetchall()
+        return [
+            RecordCheck(e, k, c, Decimal(st), Decimal(dv), ln, run)
+            for e, k, c, st, dv, ln, run in rows
+        ]
+
+    # --------------------------------------------------------------- fill totals
+
+    def upsert_fill_total(self, total: FillTotal, *, run_id: int, source: str) -> Outcome:
+        """Store one day's totals. A complete day replaces what is stored; a partial
+        day (the edge of a file) only fills a day nothing is stored for yet or
+        replaces another partial one."""
+        data = json.dumps(_fill_total_data(total), sort_keys=True, separators=(",", ":"))
+        new_hash = hashlib.sha256(data.encode()).hexdigest()
+        ident = (total.venue, total.account, total.day, total.symbol)
+        row = self._conn.execute(
+            "SELECT content_hash, complete FROM lh_fill_totals"
+            " WHERE venue = ? AND account = ? AND day = ? AND symbol = ?",
+            ident,
+        ).fetchone()
+        if row is not None and (row[0] == new_hash or (row[1] and not total.complete)):
+            return Outcome.UNCHANGED
+        self._conn.execute(
+            "INSERT OR REPLACE INTO lh_fill_totals (venue, account, day, symbol, complete,"
+            " data, content_hash, run_id, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (*ident, int(total.complete), data, new_hash, run_id, source),
+        )
+        return Outcome.INSERTED if row is None else Outcome.UPDATED
+
+    def fill_totals(self, *, venue: str, account: str) -> list[FillTotal]:
+        rows = self._conn.execute(
+            "SELECT data FROM lh_fill_totals WHERE venue = ? AND account = ? ORDER BY day, symbol",
+            (venue, account),
+        ).fetchall()
+        return [_fill_total_from(json.loads(r[0])) for r in rows]
+
     # ----------------------------------------------------------------- coverage
 
     def add_coverage(
@@ -576,6 +715,19 @@ def journal_from_data(data: dict[str, Any]) -> JournalEntry:
     return JournalEntry(**kwargs)
 
 
+def _fill_total_data(t: FillTotal) -> dict[str, Any]:
+    out = dataclasses.asdict(t)
+    for k in ("fee", "realized_pnl"):
+        out[k] = decimal_text(out[k])
+    return out
+
+
+def _fill_total_from(data: dict[str, Any]) -> FillTotal:
+    return FillTotal(
+        **{**data, "fee": Decimal(data["fee"]), "realized_pnl": Decimal(data["realized_pnl"])}
+    )
+
+
 def stored_origin(path: Path) -> Origin | None:
     """The origin label of the archive at ``path`` (read-only), or ``None``."""
     if not path.is_file():
@@ -633,6 +785,7 @@ __all__ = [
     "LiveArchive",
     "Origin",
     "Outcome",
+    "RecordCheck",
     "Revision",
     "RunStatus",
     "SyncRun",

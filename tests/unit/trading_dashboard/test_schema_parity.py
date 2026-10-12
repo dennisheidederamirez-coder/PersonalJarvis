@@ -126,23 +126,28 @@ def test_every_live_code_has_a_label_in_both_languages() -> None:
     needed = {f"live.recon.code.{c.value}" for c in Code}
     needed |= {f"live.recon.cause.{c.value}" for c in Code}
     needed |= {f"live.recon.field.{f}" for f in set(live_views._FIELD.values())}
+    needed |= {f"live.recon.field.{f}" for f in live_views._OWN_FIELDS}
     needed |= {f"live.recon.other_source.{o}" for o in set(live_views._OTHER.values())}
+    needed |= {f"live.recon.other_source.{o}" for o in set(live_views._OTHER_BY_CODE.values())}
     needed |= {f"live.recon.severity.{s.value}" for s in Severity}
     needed |= {f"live.recon.basis_name.{b.value}" for b in PnlBasis} | {
         "live.recon.basis_name.mixed"
     }
-    needed |= {f"live.recon.group.{g}" for g in ("internal", "journal", "balance")}
+    needed |= {
+        f"live.recon.group.{g}" for g in ("internal", "journal", "balance", "export", "totals")
+    }
     needed |= {f"live.issue.{c.value}" for c in IssueCode}
     needed |= {f"live.sources.import_kind.{k.value}" for k in ImportKind}
     needed |= {f"live.sources.error.{e.value}" for e in ErrorKind}
     needed |= {f"live.sources.status.{r.value}" for r in RunStatus}
     needed |= {f"live.sources.kind.{k}" for k in ("sync", "backfill", "import")}
+    needed |= {f"live.sources.how.{h}" for h in ("declared", "inferred", "layout")}
     needed |= {f"live.sources.stream.{s.value}" for s in Stream}
     needed |= {f"live.sources.gap.{r}" for r in ("api", "export")}
     needed |= {f"live.sources.note.{n}" for n in ("retention_unknown", "beyond_retention")}
     needed |= {
         f"live.sources.entity.{e}"
-        for e in ("position", "fill", "order", "balance", "journal_entry")
+        for e in ("position", "fill", "order", "balance", "journal_entry", "fill_total")
     }
     needed |= {
         f"live.warning.{w}"

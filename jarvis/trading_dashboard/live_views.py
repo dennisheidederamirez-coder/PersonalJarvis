@@ -27,10 +27,14 @@ from typing import Any, Final
 from jarvis.live_history.models import Fill, Position
 from jarvis.live_history.reconcile import (
     DEFAULT_TOLERANCES,
+    Code,
     Finding,
     JournalEntry,
+    Severity,
     check_balance,
+    check_fill_totals,
     check_internal,
+    compare_twin,
     reconcile_journal,
 )
 from jarvis.live_history.sync import Stream, plan_gaps
@@ -48,7 +52,7 @@ MAX_FINDINGS_SHOWN: Final = 500
 
 @dataclass(frozen=True)
 class _Hit:
-    group: str  # internal / journal / balance
+    group: str  # internal / journal / balance / export / totals
     finding: Finding
     period: tuple[int, int] | None = None  # balance: the two observations
 
@@ -471,7 +475,38 @@ def _reconcile(snap: LiveSnapshot, journal: str | None) -> _Recon:
         checks += 1
         period = (before.ts_ms, after.ts_ms)
         out += [_Hit("balance", f, period) for f in check_balance(before, after, then, now)]
+    out += _export_hits(snap)
+    totals = check_fill_totals(
+        snap.fill_totals, snap.fills, snap.coverage.get(Stream.FILLS.value, []), snap.positions
+    )
+    out += [_Hit("totals", f, f.period) for f in totals]
     return _Recon(out, journal, span, basis, compared, entries_n, matched, checks)
+
+
+def _export_hits(snap: LiveSnapshot) -> list[_Hit]:
+    """What exports without ids say against themselves and against the API."""
+    out: list[_Hit] = []
+    by_id = _by_position(snap)
+    for c in snap.checks:
+        if c.code != Code.EXPORT_PNL_INCONSISTENT.value:
+            continue
+        key = snap.aliases.get(c.record_key, c.record_key)
+        pos = by_id.get(key)
+        finding = Finding(
+            Code.EXPORT_PNL_INCONSISTENT,
+            Severity.WARNING,
+            key,
+            symbol=pos.symbol if pos else None,
+            venue_value=c.stated,
+            other_value=c.derived,
+            field="net",
+        )
+        out.append(_Hit("export", finding))
+    for api_id, copy in sorted(snap.twins.items()):
+        api = by_id.get(api_id)
+        if api is not None:
+            out += [_Hit("export", f) for f in compare_twin(api, copy)]
+    return out
 
 
 _FIELD: Final = {
@@ -483,8 +518,20 @@ _FIELD: Final = {
     "price_mismatch": "close_price",
     "status_mismatch": "status",
     "unexplained_balance_change": "wallet",
+    "export_pnl_inconsistent": "net",
 }
-_OTHER: Final = {"internal": "fills", "journal": "journal", "balance": "trade_history"}
+#: Fields a finding names itself (``Finding.field``), for the labels.
+_OWN_FIELDS: Final = ("qty", "entry_price", "close_price", "fee", "funding", "realized")
+_OTHER: Final = {
+    "internal": "fills",
+    "journal": "journal",
+    "balance": "trade_history",
+    "totals": "fill_totals",
+}
+_OTHER_BY_CODE: Final = {
+    "export_pnl_inconsistent": "export_components",
+    "export_differs_from_api": "export",
+}
 
 
 def _finding(snap: LiveSnapshot, rec: _Recon, hit: _Hit) -> s.LiveFinding:
@@ -502,6 +549,7 @@ def _finding(snap: LiveSnapshot, rec: _Recon, hit: _Hit) -> s.LiveFinding:
     basis = None
     if f.code.value == "pnl_mismatch" and entry is not None:
         basis = entry.pnl_basis.value
+    period = hit.period or f.period
     ident = ":".join(
         str(x)
         for x in (
@@ -509,36 +557,42 @@ def _finding(snap: LiveSnapshot, rec: _Recon, hit: _Hit) -> s.LiveFinding:
             f.code.value,
             f.position_id or "",
             f.entry_id or "",
-            hit.period[1] if hit.period else "",
+            f.symbol if hit.group == "totals" else "",
+            f.field or "",
+            period[1] if period else "",
         )
     )
+    if hit.group == "balance":
+        venue_source: str | None = "api"
+    elif f.code is Code.EXPORT_PNL_INCONSISTENT:
+        venue_source = "csv"
+    elif pos is not None:
+        venue_source = _origin(snap, "position", pos.position_id)
+    else:
+        venue_source = None
     return s.LiveFinding(
         id=ident,
         code=f.code.value,
         severity=f.severity.value,
         group=hit.group,
-        field=_FIELD.get(f.code.value),
+        field=f.field or _FIELD.get(f.code.value),
         position_id=f.position_id,
         entry_id=f.entry_id,
         symbol=f.symbol,
         side=pos.side if pos else (entry.side.lower() if entry else None),
         opened_ms=opened,
         closed_ms=closed,
-        venue_source=(
-            _origin(snap, "position", pos.position_id)
-            if pos
-            else ("api" if hit.group == "balance" else None)
-        ),
-        other_source=_OTHER[hit.group],
+        venue_source=venue_source,
+        other_source=_OTHER_BY_CODE.get(f.code.value) or _OTHER[hit.group],
         journal=rec.journal if hit.group == "journal" else None,
         basis=basis,
         fill_ids=fills,
-        period_from_ms=hit.period[0] if hit.period else None,
-        period_to_ms=hit.period[1] if hit.period else None,
+        period_from_ms=period[0] if period else None,
+        period_to_ms=period[1] if period else None,
         venue_value=_f(f.venue_value),
         other_value=_f(f.other_value),
         difference=_f(f.difference),
-        ts_ms=hit.period[1] if hit.period else None,
+        ts_ms=period[1] if period else None,
     )
 
 
@@ -640,6 +694,7 @@ def sources(ctx: LiveContext) -> s.LiveSourcesView:
             "order": snap.orders,
             "balance": len(snap.balances),
             "journal_entry": sum(len(v) for v in snap.journals.values()),
+            "fill_total": len(snap.fill_totals),
         },
         runs=[_run(r) for r in snap.runs],
         imports=[_import(snap, r) for r in snap.runs if r.kind == "import"][:20],

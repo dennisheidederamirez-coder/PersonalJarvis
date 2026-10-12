@@ -377,7 +377,8 @@
       "origin": "Source",
       "findings": "Reconciliation",
       "count": "{shown} of {total}",
-      "more": "Load older"
+      "more": "Load older",
+      "derived_id": "no exchange id"
     },
     "origin": {
       "api": "API",
@@ -448,7 +449,9 @@
       "group": {
         "internal": "Exchange internal",
         "journal": "Journal",
-        "balance": "Balance"
+        "balance": "Balance",
+        "export": "Export",
+        "totals": "Transaction totals"
       },
       "severity": {
         "error": "Error",
@@ -467,7 +470,10 @@
         "fee_mismatch": "Fee differs",
         "funding_mismatch": "Funding differs",
         "pnl_mismatch": "P/L differs",
-        "unexplained_balance_change": "Balance change without a trade (deposit, transfer, bonus …)"
+        "unexplained_balance_change": "Balance change without a trade (deposit, transfer, bonus …)",
+        "export_pnl_inconsistent": "Export contradicts itself (net P/L)",
+        "export_differs_from_api": "Export differs from the API",
+        "fill_totals_mismatch": "Daily transaction totals differ"
       },
       "basis_name": {
         "gross": "gross (before fees and funding)",
@@ -482,12 +488,18 @@
         "pnl": "P/L",
         "close_price": "Exit price",
         "status": "Status",
-        "wallet": "Balance"
+        "wallet": "Balance",
+        "net": "Net P/L",
+        "qty": "Size",
+        "entry_price": "Entry price"
       },
       "other_source": {
         "fills": "Sum of the fills",
         "journal": "Journal {journal}",
-        "trade_history": "Explained by trades, fees, funding"
+        "trade_history": "Explained by trades, fees, funding",
+        "export": "Export (no ids)",
+        "export_components": "Gross − fee + funding (export)",
+        "fill_totals": "Daily totals, transaction export"
       },
       "ref": {
         "position": "Position {id}",
@@ -496,7 +508,9 @@
         "opened": "opened {time}",
         "closed": "closed {time}",
         "period": "between {from} and {to}",
-        "none": "—"
+        "none": "—",
+        "position_derived": "Position without exchange id (derived: {id})",
+        "no_position": "not assigned to a single position"
       },
       "cause": {
         "fills_missing": "No fills are archived for this closed position, so its sums cannot be checked. Usually the trade export for this period is missing.",
@@ -510,7 +524,10 @@
         "fee_mismatch": "The journal's fee differs from the exchange's fee (tolerance 0.01 USDT or 0.05 %).",
         "funding_mismatch": "The journal's funding differs from the exchange's. Common cause: the journal does not record funding, or records it with the opposite sign.",
         "pnl_mismatch": "The journal's P/L differs from the exchange's. Both values are converted to the journal's definition: {basis}.",
-        "unexplained_balance_change": "Between two observations the balance changed by more than trades, fees and funding explain – e.g. a deposit, withdrawal, transfer or bonus."
+        "unexplained_balance_change": "Between two observations the balance changed by more than trades, fees and funding explain – e.g. a deposit, withdrawal, transfer or bonus.",
+        "export_pnl_inconsistent": "In the position export, the stated net result is not position P/L − fee + funding of the same row. The position P/L (gross) is archived; the difference stays visible until it is explained. Possible causes: a liquidation, a partial close, or a fee the export does not list separately.",
+        "export_differs_from_api": "The API delivers the same position (same symbol, side and opening second) differently from the export without ids. The API's version is shown and counted; the export's value stands next to it for comparison.",
+        "fill_totals_mismatch": "The daily totals of the transaction export (no ids, not assigned to any position) do not match the archive — on fully covered days its API fills, otherwise the realized result of the positions closed in those days. At the edge of a period, a close spread across the boundary can be the cause."
       }
     },
     "sources": {
@@ -520,7 +537,8 @@
         "fill": "Trades",
         "order": "Orders",
         "balance": "Balance observations",
-        "journal_entry": "Journal entries"
+        "journal_entry": "Journal entries",
+        "fill_total": "Daily totals"
       },
       "runs": "Runs (syncs and imports)",
       "runs_none": "No runs yet.",
@@ -558,7 +576,8 @@
       "basis_value": "P/L: {basis} ({how})",
       "how": {
         "declared": "stated",
-        "inferred": "recognised"
+        "inferred": "recognised",
+        "layout": "from the export layout"
       },
       "issues_none": "No problems.",
       "line": "Line {line}",
@@ -628,7 +647,14 @@
       "pnl_basis_inferred": "P/L definition recognised from the rows",
       "pnl_basis_doubtful": "Stated P/L definition does not fit the rows",
       "already_imported": "File was imported before",
-      "issues_truncated": "Further issues not stored"
+      "issues_truncated": "Further issues not stored",
+      "layout_unsupported": "This layout does not exist for this kind of export",
+      "unit_mismatch": "Size unit does not fit the symbol",
+      "pnl_components_mismatch": "Net P/L ≠ gross − fee + funding",
+      "identical_rows": "Identical row (without an id it cannot be told from a second fill; kept)",
+      "matched_by_identity": "Positions matched to the API's (symbol, side, opening)",
+      "kept_as_totals": "Without trade ids, stored as daily totals only",
+      "coverage_not_recorded": "Period not recorded as fill coverage (totals only)"
     },
     "title_synthetic": "Trading (LIVE history · demo data)",
     "banner_synthetic": "DEMO – synthetic test data from the simulated account, not real account data. Separate from the paper test and from your real account; read-only.",

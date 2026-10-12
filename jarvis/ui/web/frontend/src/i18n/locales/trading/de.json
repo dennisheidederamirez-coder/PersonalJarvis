@@ -377,7 +377,8 @@
       "origin": "Quelle",
       "findings": "Abgleich",
       "count": "{shown} von {total}",
-      "more": "Ältere laden"
+      "more": "Ältere laden",
+      "derived_id": "ohne Börsen-ID"
     },
     "origin": {
       "api": "API",
@@ -448,7 +449,9 @@
       "group": {
         "internal": "Börse intern",
         "journal": "Journal",
-        "balance": "Kontostand"
+        "balance": "Kontostand",
+        "export": "Export",
+        "totals": "Transaktionssummen"
       },
       "severity": {
         "error": "Fehler",
@@ -467,7 +470,10 @@
         "fee_mismatch": "Gebühr weicht ab",
         "funding_mismatch": "Funding weicht ab",
         "pnl_mismatch": "P/L weicht ab",
-        "unexplained_balance_change": "Kontostandsänderung ohne Trade (Einzahlung, Transfer, Bonus …)"
+        "unexplained_balance_change": "Kontostandsänderung ohne Trade (Einzahlung, Transfer, Bonus …)",
+        "export_pnl_inconsistent": "Export widerspricht sich (Netto-P/L)",
+        "export_differs_from_api": "Export weicht von API ab",
+        "fill_totals_mismatch": "Tagessummen der Transaktionen weichen ab"
       },
       "basis_name": {
         "gross": "brutto (vor Gebühren und Funding)",
@@ -482,12 +488,18 @@
         "pnl": "P/L",
         "close_price": "Ausstiegspreis",
         "status": "Status",
-        "wallet": "Kontostand"
+        "wallet": "Kontostand",
+        "net": "Netto-P/L",
+        "qty": "Menge",
+        "entry_price": "Einstiegspreis"
       },
       "other_source": {
         "fills": "Summe der Fills",
         "journal": "Journal {journal}",
-        "trade_history": "Erklärt durch Trades, Gebühren, Funding"
+        "trade_history": "Erklärt durch Trades, Gebühren, Funding",
+        "export": "Export (ohne IDs)",
+        "export_components": "Brutto − Gebühr + Funding (Export)",
+        "fill_totals": "Tagessummen Transaktions-Export"
       },
       "ref": {
         "position": "Position {id}",
@@ -496,7 +508,9 @@
         "opened": "eröffnet {time}",
         "closed": "geschlossen {time}",
         "period": "zwischen {from} und {to}",
-        "none": "—"
+        "none": "—",
+        "position_derived": "Position ohne Börsen-ID (abgeleitet: {id})",
+        "no_position": "keiner einzelnen Position zugeordnet"
       },
       "cause": {
         "fills_missing": "Zur geschlossenen Position sind keine Fills archiviert, daher ist keine Summenprüfung möglich. Meist fehlt der Trade-Export für diesen Zeitraum.",
@@ -510,7 +524,10 @@
         "fee_mismatch": "Die Gebühr im Journal weicht von der Gebühr der Börse ab (Toleranz 0,01 USDT bzw. 0,05 %).",
         "funding_mismatch": "Das Funding im Journal weicht vom Funding der Börse ab. Häufige Ursache: Das Journal erfasst Funding nicht oder mit umgekehrtem Vorzeichen.",
         "pnl_mismatch": "Das P/L im Journal weicht vom P/L der Börse ab. Beide Werte sind auf die Definition des Journals umgerechnet: {basis}.",
-        "unexplained_balance_change": "Der Kontostand hat sich zwischen zwei Beobachtungen anders verändert, als Trades, Gebühren und Funding erklären – z. B. durch Einzahlung, Auszahlung, Transfer oder Bonus."
+        "unexplained_balance_change": "Der Kontostand hat sich zwischen zwei Beobachtungen anders verändert, als Trades, Gebühren und Funding erklären – z. B. durch Einzahlung, Auszahlung, Transfer oder Bonus.",
+        "export_pnl_inconsistent": "Im Positions-Export ist das angegebene Netto-Ergebnis nicht gleich Positions-P/L − Gebühr + Funding derselben Zeile. Archiviert wird das Positions-P/L (brutto); die Differenz bleibt sichtbar, bis sie geklärt ist. Mögliche Ursachen: Liquidation, Teilschließung oder eine Gebühr, die der Export nicht einzeln ausweist.",
+        "export_differs_from_api": "Dieselbe Position (gleiches Symbol, gleiche Richtung, gleiche Eröffnungssekunde) liefert die API anders als der Export ohne IDs. Angezeigt und gerechnet wird die API-Version; der Export-Wert steht als Vergleich daneben.",
+        "fill_totals_mismatch": "Die Tagessummen aus dem Transaktions-Export (ohne IDs, keiner Position zugeordnet) stimmen nicht mit dem Archiv überein – an voll abgedeckten Tagen mit den Fills der API, sonst mit dem realisierten Ergebnis der in diesen Tagen geschlossenen Positionen. Am Rand eines Zeitraums kann eine über die Grenze verteilte Schließung die Ursache sein."
       }
     },
     "sources": {
@@ -520,7 +537,8 @@
         "fill": "Trades",
         "order": "Orders",
         "balance": "Kontostand-Beobachtungen",
-        "journal_entry": "Journal-Einträge"
+        "journal_entry": "Journal-Einträge",
+        "fill_total": "Tagessummen"
       },
       "runs": "Läufe (Syncs und Importe)",
       "runs_none": "Noch keine Läufe.",
@@ -558,7 +576,8 @@
       "basis_value": "P/L: {basis} ({how})",
       "how": {
         "declared": "angegeben",
-        "inferred": "erkannt"
+        "inferred": "erkannt",
+        "layout": "aus dem Export-Layout"
       },
       "issues_none": "Keine Probleme.",
       "line": "Zeile {line}",
@@ -628,7 +647,14 @@
       "pnl_basis_inferred": "P/L-Definition aus den Zeilen erkannt",
       "pnl_basis_doubtful": "Angegebene P/L-Definition passt nicht zu den Zeilen",
       "already_imported": "Datei war schon importiert",
-      "issues_truncated": "Weitere Probleme nicht gespeichert"
+      "issues_truncated": "Weitere Probleme nicht gespeichert",
+      "layout_unsupported": "Dieses Layout gibt es für diese Exportart nicht",
+      "unit_mismatch": "Mengeneinheit passt nicht zum Symbol",
+      "pnl_components_mismatch": "Netto-P/L ≠ Brutto − Gebühr + Funding",
+      "identical_rows": "Identische Zeile (ohne ID nicht von einem zweiten Fill unterscheidbar; behalten)",
+      "matched_by_identity": "Positionen der API zugeordnet (Symbol, Richtung, Eröffnung)",
+      "kept_as_totals": "Ohne Trade-IDs nur als Tagessummen gespeichert",
+      "coverage_not_recorded": "Zeitraum nicht als Fill-Abdeckung vermerkt (nur Summen)"
     },
     "title_synthetic": "Trading (LIVE-Historie · Demodaten)",
     "banner_synthetic": "DEMO – synthetische Testdaten aus dem simulierten Konto, keine echten Kontodaten. Getrennt vom Paper-Test und von deinem echten Konto; nur lesend.",

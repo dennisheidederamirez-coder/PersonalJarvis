@@ -6,6 +6,7 @@ import {
   LIVE_RESPONSES,
   liveMissingSource,
   liveOverview,
+  liveReconciliation,
 } from "@/components/trading/live/liveFixtures";
 import { RESPONSES, missingSource, overview } from "@/components/trading/testFixtures";
 import {
@@ -209,6 +210,66 @@ describe("TradingDeskView — LIVE history", () => {
     // balance: the two observations
     expect(within(tab).getByText(/^zwischen .+ und .+$/)).toBeTruthy(); // i18n-allow: asserts the German default UI text
     expect(within(tab).getByTestId("live-scroll-table")).toBeTruthy();
+  });
+
+  it("labels derived ids and keeps transaction totals off single positions", async () => {
+    const base = liveReconciliation.findings[0];
+    const exportFinding = {
+      ...base,
+      id: "export:export_pnl_inconsistent:x:3f2a91c07b5e4d18",
+      code: "export_pnl_inconsistent",
+      severity: "warning",
+      group: "export",
+      field: "net",
+      position_id: "x:3f2a91c07b5e4d18",
+      entry_id: null,
+      venue_source: "csv",
+      other_source: "export_components",
+      fill_ids: [],
+      venue_value: -45.66,
+      other_value: -1.18,
+      difference: -44.48,
+    };
+    const totalsFinding = {
+      ...base,
+      id: "totals:fill_totals_mismatch:SOLUSDT:fee",
+      code: "fill_totals_mismatch",
+      severity: "error",
+      group: "totals",
+      field: "fee",
+      position_id: null,
+      entry_id: null,
+      symbol: "SOLUSDT",
+      side: null,
+      opened_ms: null,
+      closed_ms: null,
+      venue_source: null,
+      other_source: "fill_totals",
+      fill_ids: [],
+      period_from_ms: 1_782_777_600_000,
+      period_to_ms: 1_782_864_000_000,
+      venue_value: 0.3,
+      other_value: 0.6,
+      difference: -0.3,
+    };
+    stubFetch({
+      ...RESPONSES,
+      ...LIVE_RESPONSES,
+      "live/reconciliation": {
+        ...liveReconciliation,
+        findings: [exportFinding, totalsFinding],
+        counts: { export_pnl_inconsistent: 1, fill_totals_mismatch: 1 },
+      },
+    });
+    await openLive();
+    fireEvent.mouseDown(screen.getByTestId("live-tab-reconciliation"));
+    const tab = await screen.findByTestId("live-reconciliation");
+    expect(within(tab).getAllByTestId("live-finding").length).toBe(2);
+    expect(within(tab).getByText("Position ohne Börsen-ID (abgeleitet: 3f2a91c0)")).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    expect(within(tab).getByText("Brutto − Gebühr + Funding (Export)")).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    expect(within(tab).getByText("keiner einzelnen Position zugeordnet")).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    expect(within(tab).getByText("Tagessummen Transaktions-Export")).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    expect(within(tab).queryByText(/^Position x:/)).toBeNull();
   });
 
   it("reads only LIVE routes once in LIVE mode, and only with GET", async () => {

@@ -5,9 +5,10 @@
         [--tz Europe/Berlin] [--pnl-basis gross|net_of_fees|net] [--map field=Header ...]
         [--decimal comma|point] [--fee-sign auto|cost_positive|cost_negative]
         [--funding-sign received_positive|paid_positive] [--journal NAME]
-        [--covers FROM TO] [--dry-run]
+        [--covers FROM TO] [--layout standard|web_export] [--dry-run]
     python -m jarvis.live_history inspect --file CSV --kind positions|fills|journal
         [--tz …] [--pnl-basis …] [--map field=Header ...] [--decimal comma|point]
+        [--layout standard|web_export]
     python -m jarvis.live_history status --archive PATH
     python -m jarvis.live_history plan-backfill --archive PATH --since 2026-01-01
 
@@ -16,7 +17,8 @@ host, and there is no option for real credentials. ``import`` only reads the
 given file and needs ``--origin real|synthetic`` (an archive never mixes the
 two; a real export inside the git repository is refused). ``inspect``
 reports an export's format — headers, counts, shares, issue codes — never
-its contents, and writes nothing. Each command prints JSON; a refused import exits with 2.
+its contents, and writes nothing. ``--layout web_export`` reads the venue's
+web export (no ids; see ``csv_import``). Each command prints JSON; a refused import exits with 2.
 Nothing here schedules itself; a run happens only when someone types it.
 """
 
@@ -39,7 +41,7 @@ from jarvis.live_history.archive import (
     describe,
     stored_origin,
 )
-from jarvis.live_history.csv_import import ImportKind, ImportOptions, import_csv
+from jarvis.live_history.csv_import import ImportKind, ImportOptions, Layout, import_csv
 from jarvis.live_history.inspect_export import InsideRepository, inside_git_tree, inspect_export
 from jarvis.live_history.reconcile import PnlBasis
 from jarvis.live_history.simulated_venue import BASE_URL, SIM_CREDENTIALS, SimulatedVenue
@@ -108,6 +110,7 @@ def _import(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         funding_sign=args.funding_sign,
         pnl_basis=PnlBasis(args.pnl_basis) if args.pnl_basis else None,
         covers=(_day_ms(args.covers[0]), _day_ms(args.covers[1])) if args.covers else None,
+        layout=Layout(args.layout),
     )
     if not args.file.is_file():
         return 2, {"error": "no file at this path"}
@@ -143,6 +146,7 @@ def _inspect(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         tz=args.tz,
         decimal_comma=None if args.decimal is None else args.decimal == "comma",
         pnl_basis=PnlBasis(args.pnl_basis) if args.pnl_basis else None,
+        layout=Layout(args.layout),
     )
     try:
         return 0, inspect_export(args.file, opts, now_ms=_now_ms)
@@ -171,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     im.add_argument("--pnl-basis", choices=[b.value for b in PnlBasis])
     im.add_argument("--map", action="append", default=[], help="field=Header (repeatable)")
     im.add_argument("--decimal", choices=["comma", "point"])
+    im.add_argument("--layout", choices=[x.value for x in Layout], default=Layout.STANDARD.value)
     im.add_argument(
         "--fee-sign", choices=["auto", "cost_positive", "cost_negative"], default="auto"
     )
@@ -196,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     ins.add_argument("--pnl-basis", choices=[b.value for b in PnlBasis])
     ins.add_argument("--map", action="append", default=[], help="field=Header (repeatable)")
     ins.add_argument("--decimal", choices=["comma", "point"])
+    ins.add_argument("--layout", choices=[x.value for x in Layout], default=Layout.STANDARD.value)
     st = sub.add_parser("status", help="what the archive holds and its last runs")
     st.add_argument("--archive", type=Path, required=True)
     pb = sub.add_parser("plan-backfill", help="missing windows and how to fill them")

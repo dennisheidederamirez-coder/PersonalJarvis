@@ -18,11 +18,17 @@ from fastapi.testclient import TestClient
 from jarvis.core.config import JarvisConfig
 from jarvis.core.config_writer import set_trading_dashboard_live_archive_path
 from jarvis.live_history.archive import LiveArchive
-from jarvis.live_history.models import Position
+from jarvis.live_history.models import Position, is_derived
 from jarvis.trading_dashboard import live_views as lv
 from jarvis.trading_dashboard.live_reader import LiveArchiveReader, LiveSnapshot
 from jarvis.trading_dashboard.reader import JournalReader, ReadFailure, SourceState
-from tests.fakes.fake_live_archive import DEPOSIT, DemoArchive, build_demo_archive
+from tests.fakes.fake_live_archive import (
+    DEPOSIT,
+    WEB_FEE_OFFSET,
+    WEB_NET_OFFSETS,
+    DemoArchive,
+    build_demo_archive,
+)
 from tests.fakes.fake_paper_journal import PaperRun, run_paper_test
 
 LIVE = ("overview", "positions", "trades", "costs", "reconciliation", "sources")
@@ -425,3 +431,81 @@ def test_the_archive_origin_reaches_the_dashboard(demo: DemoArchive, tmp_path: P
         c.execute("DELETE FROM lh_meta WHERE key = 'origin'")
     src = lv.source(lv.context(LiveArchiveReader(unlabelled).read(), demo.now_ms))
     assert src.origin == "unknown" and "origin_unknown" in src.warnings
+
+
+# ------------------------------------------------------- web exports (no ids)
+
+
+@pytest.fixture(scope="module")
+def web_demo(tmp_path_factory: pytest.TempPathFactory) -> DemoArchive:
+    return build_demo_archive(tmp_path_factory.mktemp("web"), web_exports=True)
+
+
+def _web_ctx(demo: DemoArchive) -> lv.LiveContext:
+    snap = LiveArchiveReader(demo.path).read()
+    assert isinstance(snap, LiveSnapshot)
+    return lv.context(snap, demo.now_ms)
+
+
+def test_a_position_from_both_sources_is_shown_once(web_demo: DemoArchive) -> None:
+    ctx = _web_ctx(web_demo)
+    snap = ctx.snap
+    assert isinstance(snap, LiveSnapshot)
+    ids = [p.position_id for p in snap.positions]
+    assert len(ids) == len(set(ids)) == len(web_demo.venue.history) + len(web_demo.venue.pending)
+    assert not any(is_derived(i) for i in ids)  # every export copy found its venue record
+    assert len(snap.twins) == len(snap.aliases) > 0
+    assert all(is_derived(p.position_id) for p in snap.twins.values())
+    # and the balance check counts it once: still only the planted deposit
+    rec = lv.reconciliation(ctx)
+    (balance,) = [f for f in rec.findings if f.group == "balance"]
+    assert balance.difference == pytest.approx(float(DEPOSIT))
+
+
+def test_export_findings_name_position_values_and_sources(web_demo: DemoArchive) -> None:
+    rec = lv.reconciliation(_web_ctx(web_demo))
+    export = [f for f in rec.findings if f.group == "export"]
+    inconsistent = {f.position_id: f for f in export if f.code == "export_pnl_inconsistent"}
+    planted = web_demo.web_changes["export_pnl_inconsistent"]
+    assert set(inconsistent) == set(planted)
+    for pid, offset in zip(planted, WEB_NET_OFFSETS, strict=True):
+        f = inconsistent[pid]
+        assert f.field == "net" and f.severity == "warning"
+        assert f.venue_source == "csv" and f.other_source == "export_components"
+        assert f.difference == pytest.approx(float(offset))
+        assert f.symbol and f.side and f.opened_ms and f.closed_ms
+    (fee,) = [f for f in export if f.code == "export_differs_from_api"]
+    assert fee.position_id == web_demo.web_changes["export_differs_from_api"][0]
+    assert fee.field == "fee" and fee.venue_source == "api" and fee.other_source == "export"
+    assert fee.difference == pytest.approx(-float(WEB_FEE_OFFSET))
+
+
+def test_fill_totals_are_never_assigned_to_a_position(web_demo: DemoArchive) -> None:
+    rec = lv.reconciliation(_web_ctx(web_demo))
+    totals = [f for f in rec.findings if f.group == "totals"]
+    assert totals  # the row written twice doubles one day's fee
+    for f in totals:
+        assert f.position_id is None and f.entry_id is None and f.fill_ids == []
+        assert f.other_source == "fill_totals" and f.symbol
+        assert f.period_from_ms is not None and f.period_to_ms is not None
+        assert f.period_to_ms - f.period_from_ms >= lv.DAY_MS
+    assert len({f.id for f in rec.findings}) == len(rec.findings)
+    sources = lv.sources(_web_ctx(web_demo))
+    assert sources.counts["fill_total"] > 0
+
+
+def test_ambiguous_twins_are_not_folded() -> None:
+    from jarvis.trading_dashboard.live_reader import _fold_twins
+
+    def pos(pid: str, opened: int) -> Position:
+        return Position(
+            "primary", "main", pid, "BTCUSDT", "long", "closed", Decimal("1"), Decimal("1"),
+            Decimal("1"), Decimal(0), Decimal(0), Decimal(0), None, None, None, None, opened,
+            opened + 1,
+        )  # fmt: skip
+
+    derived = pos("x:abc", 5_000_000)
+    kept, twins = _fold_twins((pos("A", 5_000_100), pos("B", 5_000_900), derived))
+    assert derived in kept and twins == {}
+    kept, twins = _fold_twins((pos("A", 5_000_100), derived))
+    assert [p.position_id for p in kept] == ["A"] and twins == {"A": derived}

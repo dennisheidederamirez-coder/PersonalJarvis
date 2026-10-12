@@ -13,7 +13,7 @@ import type { TradingLivePosition } from "@/types/trading";
 import { Empty, Section, SideBadge } from "../parts";
 import { coin, dateTime, price, qty, toneClass } from "../tradingFormat";
 import type { TradingT } from "../tradingI18n";
-import { LiveSourceNotice, OriginTag, ScrollTable } from "./liveParts";
+import { isDerivedId, LiveSourceNotice, OriginTag, ScrollTable } from "./liveParts";
 
 const PAGE = 50;
 
@@ -51,7 +51,9 @@ export function LivePositionsTab({ locale, t }: { locale: string; t: TradingT })
       <TableRow key={p.position_id} columns={open ? openColumns : columns}>
         <Cell>
           <div className="truncate">{p.symbol}</div>
-          <div className="truncate font-mono text-xs text-foreground-faint">{p.position_id}</div>
+          <div className="truncate font-mono text-xs text-foreground-faint">
+            {isDerivedId(p.position_id) ? t("live.positions.derived_id") : p.position_id}
+          </div>
         </Cell>
         <Cell>
           <SideBadge side={p.side} t={t} />

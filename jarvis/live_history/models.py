@@ -161,6 +161,51 @@ class Balance:
         return self.available + self.frozen + self.margin
 
 
+#: Prefix of a position id Jarvis derived because the source carries none.
+DERIVED_PREFIX: Final = "x:"
+
+
+def derived_position_id(symbol: str, side: str, opened_ms: int) -> str:
+    """A stable id for a position whose source has none: what identifies it.
+
+    A venue holds at most one position per symbol and side opening in the
+    same second; the second (not the millisecond) is used so an export that
+    rounds times to seconds derives the same id as one that does not.
+    """
+    ident = f"{symbol}|{side}|{opened_ms // 1000}"
+    return DERIVED_PREFIX + hashlib.sha256(ident.encode()).hexdigest()[:16]
+
+
+def is_derived(position_id: str) -> bool:
+    return position_id.startswith(DERIVED_PREFIX)
+
+
+@dataclass(frozen=True)
+class FillTotal:
+    """One UTC day of one symbol's fills, summed from an export without trade ids.
+
+    Without ids a fill cannot be told from a second fill in the same second,
+    nor assigned to a position; such an export is kept only as these totals,
+    which the reconciler compares, and never as ``Fill`` records.
+    ``complete`` is false for the first and last day of the file, which it
+    may cover only in part.
+    """
+
+    venue: str
+    account: str
+    day: str  # YYYY-MM-DD, UTC
+    symbol: str
+    fills: int
+    opens: int
+    closes: int
+    fee: Decimal
+    realized_pnl: Decimal  # the closing fills' P/L, excluding fees (as on a Fill)
+    complete: bool
+
+    def key(self) -> str:
+        return f"{self.day}:{self.symbol}"
+
+
 Record = Position | Fill | Order | Balance
 
 TYPES: Final[dict[Entity, type[Position] | type[Fill] | type[Order] | type[Balance]]] = {
@@ -212,11 +257,15 @@ __all__ = [
     "Balance",
     "Entity",
     "Fill",
+    "FillTotal",
     "Order",
     "Position",
     "Record",
+    "DERIVED_PREFIX",
     "content_hash",
     "decimal_text",
+    "derived_position_id",
     "from_data",
+    "is_derived",
     "to_data",
 ]

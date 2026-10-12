@@ -47,6 +47,22 @@ declared by the person importing it or reported:
   is reported (``conflicts_with_api``). Re-importing the same file changes
   nothing.
 
+Layouts. ``standard`` is the shape above: one row per record with the
+venue's id. ``web_export`` is what the venue's web interface exports: no ids
+at all, symbol, side and margin mode in one column (``BTCUSDT Long·CROSS``),
+sizes with their unit (``0.5 BTC``), and the P/L twice — gross and net.
+
+- Its **positions** get a derived id (symbol, side, opening second; see
+  ``models.derived_position_id``); a position the API already delivered with
+  the same identity is matched to that one instead. The gross P/L is stored;
+  the stated net is checked against gross − fee + funding, and a row that
+  fails keeps its stated and derived value per position
+  (``pnl_components_mismatch``) for the reconciliation to show.
+- Its **fills** cannot be told apart (two fills in the same second look
+  alike) nor assigned to a position, so they are stored only as daily totals
+  per symbol (``FillTotal``); identical rows are kept and counted
+  (``identical_rows``), and the file never counts as fill coverage.
+
 Safety: the file is only read; size, rows, columns and cell length are
 capped; text fields accept a narrow character set (no spreadsheet formulas);
 issues carry line, code and field name — never a cell's content. A dry run
@@ -72,8 +88,18 @@ from typing import Any, Final, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jarvis.live_history.archive import LiveArchive, Outcome, RunStatus
-from jarvis.live_history.models import Fill, Position, Record, content_hash, decimal_text
-from jarvis.live_history.reconcile import JournalEntry, PnlBasis, Severity
+from jarvis.live_history.models import (
+    Entity,
+    Fill,
+    FillTotal,
+    Position,
+    Record,
+    content_hash,
+    decimal_text,
+    derived_position_id,
+    is_derived,
+)
+from jarvis.live_history.reconcile import Code, JournalEntry, PnlBasis, Severity, utc_day
 from jarvis.live_history.symbols import canonical, split
 from jarvis.live_history.sync import Stream
 
@@ -95,8 +121,14 @@ class ImportKind(StrEnum):
     JOURNAL = "journal"  # an external journal's export
 
 
+class Layout(StrEnum):
+    STANDARD = "standard"  # one row per record, with the venue's id
+    WEB_EXPORT = "web_export"  # the venue's web export: no ids, combined contract column
+
+
 class IssueCode(StrEnum):
     # the file is refused
+    LAYOUT_UNSUPPORTED = "layout_unsupported"
     FILE_TOO_LARGE = "file_too_large"
     NOT_TEXT = "not_text"
     EMPTY_FILE = "empty_file"
@@ -123,6 +155,7 @@ class IssueCode(StrEnum):
     FUTURE_TIME = "future_time"
     CLOSED_BEFORE_OPENED = "closed_before_opened"
     FOREIGN_FEE_CURRENCY = "foreign_fee_currency"
+    UNIT_MISMATCH = "unit_mismatch"
     CONFLICTING_DUPLICATE = "conflicting_duplicate"
     CONFLICTS_WITH_API = "conflicts_with_api"
     # kept, but worth knowing
@@ -135,6 +168,11 @@ class IssueCode(StrEnum):
     PNL_BASIS_INFERRED = "pnl_basis_inferred"
     PNL_BASIS_DOUBTFUL = "pnl_basis_doubtful"
     ALREADY_IMPORTED = "already_imported"
+    PNL_COMPONENTS_MISMATCH = "pnl_components_mismatch"
+    IDENTICAL_ROWS = "identical_rows"
+    MATCHED_BY_IDENTITY = "matched_by_identity"
+    KEPT_AS_TOTALS = "kept_as_totals"
+    COVERAGE_NOT_RECORDED = "coverage_not_recorded"
     ISSUES_TRUNCATED = "issues_truncated"
 
 
@@ -197,6 +235,25 @@ _ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "margin_mode": ("marginmode",),
 }
 
+#: Header aliases of the ``web_export`` layout (they replace the standard ones).
+_WEB_ALIASES: Final[dict[str, tuple[str, ...]]] = {
+    "contract": ("futures", "contract"),
+    "symbol": ("futures", "symbol"),
+    "action": ("side",),
+    "qty": ("closedamount", "transactionamount"),
+    "entry_price": ("averageentryprice",),
+    "close_price": ("averageclosingprice",),
+    "price": ("averageprice",),
+    "fee": ("positionfee", "fee"),
+    "fee_coin": ("coin",),
+    "funding": ("fundingfees",),
+    "pnl": ("positionpnl", "realizedpl"),
+    "pnl_net": ("realizedpnl", "netprofits"),
+    "opened": ("openingtime",),
+    "closed": ("closedtime",),
+    "time": ("date",),
+}
+
 _FIELDS: Final[dict[ImportKind, tuple[tuple[str, ...], tuple[str, ...]]]] = {
     # (required, optional)
     ImportKind.POSITIONS: (
@@ -223,6 +280,37 @@ _FIELDS: Final[dict[ImportKind, tuple[tuple[str, ...], tuple[str, ...]]]] = {
     ),
 }
 
+_WEB_FIELDS: Final[dict[ImportKind, tuple[tuple[str, ...], tuple[str, ...]]]] = {
+    ImportKind.POSITIONS: (
+        (
+            "contract",
+            "qty",
+            "entry_price",
+            "close_price",
+            "fee",
+            "funding",
+            "pnl",
+            "pnl_net",
+            "opened",
+            "closed",
+        ),
+        ("fee_coin",),
+    ),
+    ImportKind.FILLS: (
+        ("symbol", "action", "qty", "price", "fee", "pnl", "time"),
+        ("pnl_net", "fee_coin"),
+    ),
+}
+
+
+def _fields(kind: ImportKind, layout: Layout) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if layout is Layout.STANDARD:
+        return _FIELDS[kind]
+    if kind not in _WEB_FIELDS:
+        raise ImportRefused(IssueCode.LAYOUT_UNSUPPORTED, kind.value)
+    return _WEB_FIELDS[kind]
+
+
 _TEXT_OK: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/\-#]*$")
 _POSITION_SIDES: Final = {"long": "long", "buy": "long", "short": "short", "sell": "short"}
 _FILL_SIDES: Final = {
@@ -234,13 +322,31 @@ _FILL_SIDES: Final = {
     "closelong": "sell",
 }
 _ROLES: Final = {"maker": "maker", "taker": "taker", "m": "maker", "t": "taker"}
+_ACTIONS: Final = {
+    "openlong": "open_long",
+    "openshort": "open_short",
+    "closelong": "close_long",
+    "closeshort": "close_short",
+}
+#: ``BTCUSDT Long·ISOLATION`` → symbol, side, margin mode (the separator varies).
+_CONTRACT: Final = re.compile(
+    r"^([A-Za-z0-9]+(?:[/_-][A-Za-z0-9]+)?)\s+(long|short)(?:\s*[^A-Za-z0-9\s]?\s*"
+    r"(isolation|isolated|cross))?$",
+    re.I,
+)
+_MARGIN_MODES: Final = {"isolation": "ISOLATION", "isolated": "ISOLATION", "cross": "CROSS"}
+_SIZED: Final = re.compile(r"^(.*?\d)\s*([A-Za-z]{2,12})$")
 
 
 def resolve_columns(
-    headers: list[str], kind: ImportKind, mapping: Mapping[str, str] | None = None
+    headers: list[str],
+    kind: ImportKind,
+    mapping: Mapping[str, str] | None = None,
+    layout: Layout = Layout.STANDARD,
 ) -> dict[str, int]:
     """Field → column index. Refuses missing required and doubly matched fields."""
-    required, optional = _FIELDS[kind]
+    required, optional = _fields(kind, layout)
+    table = {**_ALIASES, **_WEB_ALIASES} if layout is Layout.WEB_EXPORT else _ALIASES
     wanted = (*required, *optional)
     normalized = [_norm(h) for h in headers]
     mapping = dict(mapping or {})
@@ -254,7 +360,7 @@ def resolve_columns(
             target = _norm(mapping[name])
             hits = [i for i, h in enumerate(normalized) if h == target]
         else:
-            aliases = _ALIASES[name]
+            aliases = table[name]
             hits = [i for i, h in enumerate(normalized) if h in aliases and i not in taken]
             # the most specific alias wins when one header is an exact field name
             if len(hits) > 1:
@@ -379,13 +485,16 @@ class ImportReport:
     issues: list[Issue] = field(default_factory=list)
     issue_total: int = 0
     pnl_basis: PnlBasis | None = None
-    pnl_basis_source: Literal["declared", "inferred"] | None = None
+    pnl_basis_source: Literal["declared", "inferred", "layout"] | None = None
     fee_sign_flipped: bool = False
     delimiter: str = ","
     decimal_comma: bool = False
     encoding: str = "utf-8"
     span_ms: tuple[int, int] | None = None
     refused: IssueCode | None = None
+    layout: Layout = Layout.STANDARD
+    #: rows of an export without ids that matched a position the API delivered
+    matched_by_identity: int = 0
 
     def add(self, issue: Issue) -> None:
         self.issue_total += 1
@@ -398,6 +507,7 @@ class ImportReport:
     def as_dict(self) -> dict[str, Any]:
         return {
             "kind": self.kind.value,
+            "layout": self.layout.value,
             "dry_run": self.dry_run,
             "status": self.status.value,
             "refused": self.refused.value if self.refused else None,
@@ -410,6 +520,7 @@ class ImportReport:
             "pnl_basis": self.pnl_basis.value if self.pnl_basis else None,
             "pnl_basis_source": self.pnl_basis_source,
             "fee_sign_flipped": self.fee_sign_flipped,
+            "matched_by_identity": self.matched_by_identity,
             "delimiter": self.delimiter,
             "decimal_comma": self.decimal_comma,
             "encoding": self.encoding,
@@ -435,6 +546,7 @@ class ImportOptions:
     pnl_basis: PnlBasis | None = None
     #: A time span the file is known to cover COMPLETELY (recorded as coverage).
     covers: tuple[int, int] | None = None
+    layout: Layout = Layout.STANDARD
 
 
 # --------------------------------------------------------------------- read
@@ -570,11 +682,43 @@ class _Parser:
         if coin.strip().upper() not in {margin, self.opts.margin_coin}:
             raise _RowError(IssueCode.FOREIGN_FEE_CURRENCY, "fee_coin")
 
+    def contract(self, cells: list[str]) -> tuple[str, str, str | None]:
+        """``BTCUSDT Long·ISOLATION`` → ``("BTCUSDT", "long", "ISOLATION")``."""
+        raw = self.cell(cells, "contract")
+        if not raw:
+            raise _RowError(IssueCode.MISSING_VALUE, "contract")
+        m = _CONTRACT.match(raw)
+        if not m:
+            raise _RowError(IssueCode.BAD_CHOICE, "contract")
+        mode = _MARGIN_MODES[m.group(3).lower()] if m.group(3) else None
+        return canonical(m.group(1)), m.group(2).lower(), mode
+
+    def sized(self, cells: list[str], name: str, symbol: str) -> Decimal:
+        """A positive size, optionally followed by its unit, which must be the base asset."""
+        raw = self.cell(cells, name)
+        m = _SIZED.match(raw)
+        if m:
+            parts = split(symbol)
+            if parts is None or m.group(2).upper() != parts[0]:
+                raise _RowError(IssueCode.UNIT_MISMATCH, name)
+            raw = m.group(1)
+        try:
+            value = parse_decimal(raw, decimal_comma=self.decimal_comma) if raw else None
+        except _RowError as exc:
+            raise _RowError(exc.code, name) from None
+        if value is None:
+            raise _RowError(IssueCode.MISSING_VALUE, name)
+        if value <= 0:
+            raise _RowError(IssueCode.NOT_POSITIVE, name)
+        return value
+
     def parse(self, line: int, cells: list[str]) -> _Row:
         if len(cells) != self.width:
             raise _RowError(IssueCode.WRONG_COLUMN_COUNT)
         if any(len(c) > MAX_CELL for c in cells):
             raise _RowError(IssueCode.CELL_TOO_LONG)
+        if self.opts.layout is Layout.WEB_EXPORT:
+            return self._parse_web(line, cells)
         kind = self.opts.kind
         v: dict[str, Any] = {}
         ambiguous = False
@@ -618,6 +762,38 @@ class _Parser:
             v["fee"] = self.number(cells, "fee", required=False)
             v["pnl"] = self.number(cells, "pnl", required=False)
         return _Row(line, v, ambiguous)
+
+    def _parse_web(self, line: int, cells: list[str]) -> _Row:
+        v: dict[str, Any] = {}
+        if self.opts.kind is ImportKind.FILLS:
+            v["symbol"] = self.symbol(cells)
+            self.fee_coin_ok(cells, v["symbol"])
+            action = self.choice(cells, "action", _ACTIONS, required=True)
+            assert action is not None
+            v["action"] = action
+            v["qty"] = self.sized(cells, "qty", v["symbol"])
+            v["price"] = self.positive(cells, "price")
+            v["fee"] = self.number(cells, "fee", required=True)
+            v["pnl"] = self.number(cells, "pnl", required=True)
+            v["pnl_net"] = self.number(cells, "pnl_net", required=False)
+            v["time"], ambiguous = self.time(cells, "time", required=True)
+            return _Row(line, v, ambiguous)
+        v["symbol"], v["side"], v["margin_mode"] = self.contract(cells)
+        self.fee_coin_ok(cells, v["symbol"])
+        v["qty"] = self.sized(cells, "qty", v["symbol"])
+        v["entry_price"] = self.positive(cells, "entry_price")
+        v["close_price"] = self.positive(cells, "close_price")
+        v["fee"] = self.number(cells, "fee", required=True)
+        v["funding"] = self.number(cells, "funding", required=True)
+        v["pnl"] = self.number(cells, "pnl", required=True)
+        v["pnl_net"] = self.number(cells, "pnl_net", required=True)
+        v["opened"], amb_open = self.time(cells, "opened", required=True)
+        v["closed"], amb_close = self.time(cells, "closed", required=True)
+        if v["closed"] < v["opened"]:
+            raise _RowError(IssueCode.CLOSED_BEFORE_OPENED, "closed")
+        v["leverage"] = None
+        v["position_id"] = derived_position_id(v["symbol"], v["side"], v["opened"])
+        return _Row(line, v, amb_open or amb_close)
 
 
 # --------------------------------------------------------- P/L basis, signs
@@ -834,9 +1010,11 @@ def import_csv(
         ts = now_ms()
         for item in rows:
             _store(archive, opts, item, run_id, ts, source, report)
+        if report.matched_by_identity:
+            report.add(Issue(IssueCode.MATCHED_BY_IDENTITY, Severity.INFO))
         clean = report.rejected == 0 and report.conflicts == 0
         report.status = RunStatus.OK if clean else RunStatus.PARTIAL
-        if opts.covers is not None and clean and opts.kind is not ImportKind.JOURNAL:
+        if opts.covers is not None and clean and _keeps_records(opts):
             stream = Stream.POSITIONS if opts.kind is ImportKind.POSITIONS else Stream.FILLS
             archive.add_coverage(
                 venue=opts.venue,
@@ -860,6 +1038,13 @@ def import_csv(
         )
         report.run_id = None if dry_run else run_id
     return report
+
+
+def _keeps_records(opts: ImportOptions) -> bool:
+    """False for a journal (its own table) and for fills kept only as totals."""
+    if opts.kind is ImportKind.JOURNAL:
+        return False
+    return not (opts.kind is ImportKind.FILLS and opts.layout is Layout.WEB_EXPORT)
 
 
 def _issue_row(i: Issue) -> tuple[int | None, str, str, str | None]:
@@ -892,12 +1077,15 @@ def _prepare(path: Path, opts: ImportOptions, report: ImportReport, now: int) ->
         raise ImportRefused(IssueCode.EMPTY_FILE) from None
     if len(headers) > MAX_COLUMNS:
         raise ImportRefused(IssueCode.TOO_MANY_COLUMNS)
-    columns = resolve_columns(headers, opts.kind, opts.mapping)
+    report.layout = opts.layout
+    columns = resolve_columns(headers, opts.kind, opts.mapping, opts.layout)
+    as_totals = not _keeps_records(opts) and opts.kind is ImportKind.FILLS
     parser = _Parser(opts, columns, len(headers), report.decimal_comma, tz, now)
 
     parsed: list[_Row] = []
     seen: dict[str, tuple[str, int]] = {}
     conflicted: set[str] = set()
+    seen_rows: set[str] = set()
     for idx, cells in enumerate(reader, start=2):
         if not any(c.strip() for c in cells):
             continue  # blank line
@@ -912,8 +1100,15 @@ def _prepare(path: Path, opts: ImportOptions, report: ImportReport, now: int) ->
             report.rejected += 1
             report.add(Issue(exc.code, Severity.ERROR, idx, exc.field))
             continue
-        key = _row_key(opts.kind, row.values)
         digest = _row_digest(row.values)
+        if as_totals:
+            # No id: a repeated row may be a second fill in the same second. Kept, counted.
+            if digest in seen_rows:
+                report.add(Issue(IssueCode.IDENTICAL_ROWS, Severity.INFO, idx))
+            seen_rows.add(digest)
+            parsed.append(row)
+            continue
+        key = _row_key(opts.kind, row.values)
         if key in seen:
             if seen[key][0] == digest:
                 report.duplicates_in_file += 1
@@ -950,6 +1145,20 @@ def _prepare(path: Path, opts: ImportOptions, report: ImportReport, now: int) ->
         # realized = net + fee − funding: without funding the venue's figure is unknowable
         raise ImportRefused(IssueCode.NET_PNL_WITHOUT_FUNDING, "funding")
 
+    checks: dict[int, tuple[Decimal, Decimal]] = {}
+    if opts.layout is Layout.WEB_EXPORT:
+        # The export states the net P/L as well: it must equal its own components.
+        for row in parsed:
+            v = row.values
+            if v.get("pnl_net") is None:
+                continue
+            derived = v["pnl"] - v["fee"] + (v.get("funding") or Decimal(0))
+            if v["pnl_net"] != derived:
+                checks[row.line] = (v["pnl_net"], derived)
+                report.add(
+                    Issue(IssueCode.PNL_COMPONENTS_MISMATCH, Severity.WARNING, row.line, "pnl_net")
+                )
+
     times = [
         t
         for row in parsed
@@ -958,13 +1167,22 @@ def _prepare(path: Path, opts: ImportOptions, report: ImportReport, now: int) ->
     ]
     report.span_ms = (min(times), max(times)) if times else None
 
+    if as_totals:
+        report.add(Issue(IssueCode.KEPT_AS_TOTALS, Severity.INFO))
+        if opts.covers is not None:
+            report.add(Issue(IssueCode.COVERAGE_NOT_RECORDED, Severity.WARNING))
+        return _fill_totals(parsed, opts)
+
+    web = opts.layout is Layout.WEB_EXPORT
     out: list[_Prepared] = []
     for row in parsed:
         v = row.values
         if opts.kind is ImportKind.POSITIONS:
             assert basis is not None
             unknown = frozenset(f for f, src in _POSITION_OPTIONAL.items() if v.get(src) is None)
-            out.append(_Prepared(row, _position(v, opts, basis), unknown))
+            out.append(
+                _Prepared(row, _position(v, opts, basis), unknown, checks.get(row.line), web)
+            )
         elif opts.kind is ImportKind.FILLS:
             unknown = frozenset(f for f, src in _FILL_OPTIONAL.items() if v.get(src) is None)
             out.append(_Prepared(row, _fill(v, opts, basis), unknown))
@@ -980,9 +1198,39 @@ _TIME_FIELDS: Final = frozenset({"opened_ms", "updated_ms", "ts_ms"})
 @dataclass(frozen=True)
 class _Prepared:
     row: _Row
-    record: Record | tuple[str, JournalEntry]
+    record: Record | FillTotal | tuple[str, JournalEntry]
     #: Record fields the file left empty: a stored value for them is kept.
     unknown: frozenset[str]
+    #: (stated, derived) net P/L when the file contradicts itself
+    check: tuple[Decimal, Decimal] | None = None
+    #: the file states a net P/L that was checked (a passing row clears an old check)
+    checked: bool = False
+
+
+def _fill_totals(rows: list[_Row], opts: ImportOptions) -> list[_Prepared]:
+    """Fills without ids → one total per UTC day and symbol; the file's first and
+    last day are marked incomplete (it may start or end inside them)."""
+    groups: dict[tuple[str, str], list[_Row]] = {}
+    for row in rows:
+        groups.setdefault((utc_day(row.values["time"]), row.values["symbol"]), []).append(row)
+    days = sorted({d for d, _ in groups})
+    out: list[_Prepared] = []
+    for (day, symbol), group in sorted(groups.items()):
+        vs = [r.values for r in group]
+        total = FillTotal(
+            venue=opts.venue,
+            account=opts.account,
+            day=day,
+            symbol=symbol,
+            fills=len(vs),
+            opens=sum(1 for v in vs if v["action"].startswith("open")),
+            closes=sum(1 for v in vs if v["action"].startswith("close")),
+            fee=sum((v["fee"] for v in vs), Decimal(0)),
+            realized_pnl=sum((v["pnl"] for v in vs), Decimal(0)),
+            complete=day not in (days[0], days[-1]),
+        )
+        out.append(_Prepared(group[0], total, frozenset()))
+    return out
 
 
 def _apply_fee_sign(rows: list[_Row], opts: ImportOptions, report: ImportReport) -> None:
@@ -1009,6 +1257,10 @@ def _pnl_basis(
 ) -> PnlBasis | None:
     if not has_pnl:
         return None
+    if opts.layout is Layout.WEB_EXPORT:
+        # Its P/L column is the gross one (the net one is checked separately).
+        report.pnl_basis, report.pnl_basis_source = PnlBasis.GROSS, "layout"
+        return PnlBasis.GROSS
     priced = opts.kind is not ImportKind.FILLS
     inferred = infer_pnl_basis([r.values for r in rows]) if priced else None
     if opts.pnl_basis is not None:
@@ -1039,6 +1291,33 @@ def _store(
             archive.upsert_journal(opts.journal, key, entry, run_id=run_id, now_ms=now)
         ] += 1
         return
+    if isinstance(record, FillTotal):
+        report.counts[archive.upsert_fill_total(record, run_id=run_id, source=source)] += 1
+        return
+    if isinstance(record, Position) and is_derived(record.position_id):
+        twin = archive.position_twin(
+            venue=record.venue,
+            account=record.account,
+            symbol=record.symbol,
+            side=record.side,
+            opened_ms=record.opened_ms,
+        )
+        if twin is not None:
+            record = dataclasses.replace(record, position_id=twin)
+            report.matched_by_identity += 1
+    if item.checked:
+        stated, derived = item.check if item.check else (None, None)
+        archive.set_check(
+            venue=record.venue,
+            account=record.account,
+            entity=Entity.POSITION,
+            record_key=record.key(),
+            code=Code.EXPORT_PNL_INCONSISTENT.value,
+            stated=stated,
+            derived=derived,
+            line=item.row.line,
+            run_id=run_id,
+        )
     stored = archive.stored(record)
     if stored is not None:
         # What the file does not say is not a change: keep the stored value.
@@ -1069,6 +1348,7 @@ __all__ = [
     "ImportReport",
     "Issue",
     "IssueCode",
+    "Layout",
     "import_csv",
     "infer_pnl_basis",
     "journal_key",

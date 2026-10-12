@@ -20,6 +20,11 @@ import { cn } from "@/lib/utils";
 import type { TradingLiveSource } from "@/types/trading";
 import type { TradingT } from "../tradingI18n";
 
+/** A position id Jarvis derived because the export carries none (``x:…``). */
+export function isDerivedId(id: string): boolean {
+  return id.startsWith("x:");
+}
+
 export function LiveSourceNotice({ source, t }: { source: TradingLiveSource; t: TradingT }) {
   if (source.state === "ok") return null;
   return (

@@ -10,6 +10,12 @@ styles exist because the real export format is not known yet:
   without an offset, fees shown as negative debits, P/L after fees and
   funding (net).
 
+``web_positions_csv`` and ``web_fills_csv`` write the venue's WEB export
+layout (``Layout.WEB_EXPORT``) with the same header names and cell shapes as
+the real one, but synthetic values: no ids, symbol·side·margin mode in one
+column, sizes with their unit, ISO times in UTC to the second, the P/L both
+gross and net. Named perturbations make a row contradict itself.
+
 ``journal_csv`` writes an external journal's export of the same trades with
 optional, named perturbations, so every reconciliation code has a cause.
 """
@@ -161,6 +167,118 @@ def venue_fills_csv(venue: SimulatedVenue, path: Path) -> Path:
     return path
 
 
+def _iso_s(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _base(symbol: str) -> str:
+    return symbol[:-4] if symbol.endswith("USDT") else symbol
+
+
+WEB_POSITION_HEADERS = [
+    "futures",
+    "opening time",
+    "average entry price",
+    "average closing price",
+    "closed amount",
+    "closed value",
+    "position pnl",
+    "realized pnl",
+    "funding fees",
+    "position fee",
+    "closed time",
+]
+WEB_FILL_HEADERS = [
+    "date",
+    "side",
+    "coin",
+    "futures",
+    "transaction amount",
+    "average price",
+    "realized p/l",
+    "netprofits",
+    "fee",
+]
+
+
+def web_positions_csv(
+    venue: SimulatedVenue,
+    path: Path,
+    *,
+    net_offset: dict[str, Decimal] | None = None,
+    fee_offset: dict[str, Decimal] | None = None,
+    cross: set[str] | None = None,
+) -> Path:
+    """Closed positions as the web export shows them.
+
+    ``net_offset``: position id → amount added to the stated net P/L only, so
+    that row's net no longer equals gross − fee + funding.
+    ``fee_offset``: position id → amount added to the fee (the row stays
+    consistent; it then differs from the venue's own record).
+    ``cross``: position ids shown with the CROSS margin mode.
+    """
+    offsets = net_offset or {}
+    fees = fee_offset or {}
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(WEB_POSITION_HEADERS)
+        for p in sorted(venue.history, key=lambda p: int(p["mtime"]), reverse=True):
+            pid = str(p["positionId"])
+            gross, funding = _dec(p["realizedPNL"]), _dec(p["funding"])
+            fee = _dec(p["fee"]) + fees.get(pid, Decimal(0))
+            qty, close = _dec(p["maxQty"]), _dec(p["closePrice"])
+            mode = "CROSS" if cross and pid in cross else "ISOLATION"
+            side = "Long" if p["side"] == "LONG" else "Short"
+            w.writerow(
+                [
+                    f"{p['symbol']} {side}\u00b7{mode}",
+                    _iso_s(int(p["ctime"])),
+                    format(_dec(p["entryPrice"]), "f"),
+                    format(close, "f"),
+                    f"{format(qty, 'f')} {_base(str(p['symbol']))}",
+                    format(qty * close, "f"),
+                    format(gross, "f"),
+                    format(gross - fee + funding + offsets.get(pid, Decimal(0)), "f"),
+                    format(funding, "f"),
+                    format(fee, "f"),
+                    _iso_s(int(p["mtime"])),
+                ]
+            )
+    return path
+
+
+def web_fills_csv(venue: SimulatedVenue, path: Path, *, repeat: int = 0) -> Path:
+    """Every fill as the web export shows it; ``repeat`` writes N rows from the middle
+    of the file twice (as a second fill in the same second would look)."""
+    sides = {str(p["positionId"]): str(p["side"]) for p in [*venue.history, *venue.pending]}
+    rows: list[list[str]] = []
+    for t in sorted(venue.trades, key=lambda t: int(t["ctime"]), reverse=True):
+        direction = sides.get(str(t["positionId"]), "LONG")
+        opening = (t["side"] == "BUY") == (direction == "LONG")
+        action = f"{'Open' if opening else 'Close'} {direction.title()}"
+        gross, fee = _dec(t["realizedPNL"]), _dec(t["fee"])
+        rows.append(
+            [
+                _iso_s(int(t["ctime"])),
+                action,
+                "USDT",
+                str(t["symbol"]),
+                str(t["qty"]),
+                str(t["price"]),
+                format(gross, "f"),
+                format(gross - fee, "f"),
+                format(fee, "f"),
+            ]
+        )
+    mid = len(rows) // 2
+    rows = [*rows[: mid + repeat], *rows[mid : mid + repeat], *rows[mid + repeat :]]
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(WEB_FILL_HEADERS)
+        w.writerows(rows)
+    return path
+
+
 @dataclass
 class JournalChanges:
     """Named differences a journal export may have against the venue."""
@@ -245,4 +363,13 @@ def journal_csv(venue: SimulatedVenue, path: Path, changes: JournalChanges | Non
     return path
 
 
-__all__ = ["JournalChanges", "journal_csv", "venue_fills_csv", "venue_positions_csv"]
+__all__ = [
+    "WEB_FILL_HEADERS",
+    "WEB_POSITION_HEADERS",
+    "JournalChanges",
+    "journal_csv",
+    "venue_fills_csv",
+    "venue_positions_csv",
+    "web_fills_csv",
+    "web_positions_csv",
+]

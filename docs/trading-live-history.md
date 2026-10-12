@@ -129,7 +129,8 @@ backfill is an ordinary run with `kind = "backfill"`.
 python -m jarvis.live_history import --archive PATH --file CSV --kind positions|fills|journal \
     [--tz Europe/Berlin] [--pnl-basis gross|net_of_fees|net] [--map field=Header ...] \
     [--decimal comma|point] [--fee-sign auto|cost_positive|cost_negative] \
-    [--funding-sign received_positive|paid_positive] [--journal NAME] [--covers FROM TO] [--dry-run]
+    [--funding-sign received_positive|paid_positive] [--journal NAME] [--covers FROM TO] \
+    [--layout standard|web_export] [--dry-run]
 ```
 
 The real export formats of the exchange and of the external journal are
@@ -153,6 +154,31 @@ What the importer checks:
 | Missing data | Required values missing → the row is rejected with line, code and field |
 | Safety | Read-only; ≤ 20 MB, ≤ 200 000 rows, ≤ 64 columns, ≤ 256 characters per cell; text fields accept a narrow character set (no spreadsheet formulas); UTF-8, falling back to Windows-1252 with a warning |
 
+### The web export layout (`--layout web_export`)
+
+The exchange's own web interface exports positions and fills in a shape the
+standard layout cannot read: **no ids at all**, symbol, side and margin mode
+in one column (`BTCUSDT Long·ISOLATION`), sizes with their unit
+(`0.5 BTC`), ISO times in UTC to the second, and the P/L twice. The format
+was established with `inspect` on the owner's files (format only); the
+synthetic samples (`web_positions_csv`, `web_fills_csv`) reproduce its
+header names and cell shapes with simulated values.
+
+| | Positions | Fills |
+|---|---|---|
+| Columns | `futures` (symbol · side · margin mode), `opening time`, `average entry price`, `average closing price`, `closed amount` (size + unit), `closed value`, `position pnl` (gross), `realized pnl` (net), `funding fees`, `position fee`, `closed time` | `date`, `side` (Open/Close Long/Short), `coin`, `futures`, `transaction amount`, `average price`, `realized p/l` (gross), `netprofits` (gross − fee), `fee` |
+| Id | Derived: `x:` + digest of symbol, side and opening **second** (`models.derived_position_id`) — a venue holds at most one position per symbol and side opening in the same second; two rows with one identity are a duplicate (identical) or both rejected (different) | None, and none can be derived: two fills in the same second look alike |
+| Stored as | `Position` records; the gross P/L as `realized_pnl` (the venue's definition) | **Only daily totals** per UTC day and symbol (`FillTotal`: fills, opens, closes, fee, realized P/L); never `Fill` records, so never assigned to a position. The file's first and last day are marked incomplete; a complete day replaces a stored one, a partial one never replaces a complete one |
+| Self-check | Stated net = gross − fee + funding, exactly; a row that fails is kept (its gross figure is consistent) and recorded per position in `lh_record_checks` with both values (`pnl_components_mismatch`); a later export that passes clears it | Stated net = gross − fee; failures are reported per line |
+| Unit | The size's unit must be the symbol's base asset (`unit_mismatch` otherwise) | Same |
+| Repeats | — | Identical rows are kept and named per line (`identical_rows`): without an id a repeat may be a second fill |
+| With the API | A row whose identity matches exactly one position the API delivered is stored under the API's id (`matched_by_identity`); the API stays primary and a differing row is `conflicts_with_api`. Imported **before** a sync, the export's copy stays under its derived id and the dashboard pairs the two copies (see Reconciliation) | `--covers` is not recorded as fill coverage (`coverage_not_recorded`): totals are not fills, and the backfill must still fetch them |
+
+`inspect --layout web_export` reports the format the same way (the
+contract column as parsed or not, sizes with unit, the four actions
+counted), and the standard `inspect` says when the web layout fits
+(`use_layout_web_export`).
+
 Every import is a run (`kind = import`); a refused file leaves a `failed`
 run with the reason. `--covers FROM TO` records coverage for the stream only
 when the import was clean, so the backfill plan stops listing that span.
@@ -166,7 +192,8 @@ the contents:
 
 ```
 python -m jarvis.live_history inspect --file EXPORT.csv --kind positions|fills|journal \
-    [--tz Europe/Berlin] [--pnl-basis …] [--map field=Header ...] [--decimal comma|point]
+    [--tz Europe/Berlin] [--pnl-basis …] [--map field=Header ...] [--decimal comma|point] \
+    [--layout standard|web_export]
 ```
 
 It prints JSON with: size, a 12-digit checksum prefix, encoding, delimiter,
@@ -222,6 +249,21 @@ All findings have a stable code (`reconcile.Code`) for later translation:
   a remainder is `unexplained_balance_change` (deposit, transfer, bonus …).
   A position archived later (a CSV backfill) but closed before the earlier
   observation is not counted as explaining the change.
+- **Exports without ids:** `export_pnl_inconsistent` — an export's stated
+  net ≠ its own gross − fee + funding (per position, both values);
+  `export_differs_from_api` — the API's copy of a position against the
+  export's copy (same symbol, side and opening second, paired only when
+  exactly one API position fits), per differing field. The dashboard shows
+  each such position **once**, as the API's copy; the export's copy is
+  used only for this comparison, so totals and the balance check never
+  count it twice.
+- **Fill totals:** `fill_totals_mismatch` — the daily totals of a fill
+  export without ids against the archived fills on days their coverage
+  spans completely (fee and realized P/L), and otherwise per run of
+  consecutive days against the realized P/L of the positions closed in it
+  (fees are not compared there: a position's fee includes an opening that
+  may lie outside the run). These findings name a symbol and days, never a
+  position.
 
 In the dashboard every finding is traceable: a stable id; the position, the
 journal entry, the summed fills or the two balance observations it is
@@ -236,6 +278,16 @@ to; and the likely cause in words (German and English).
 `tests/unit/live_history/test_inspect_export.py` — no cell content in the
 report, nothing written, files inside a git tree refused, unknown columns
 reported, `--origin` mandatory, real imports refused inside the repository.
+
+`tests/unit/live_history/test_web_export.py` — the web layout: derived ids,
+contract and unit parsing, the net self-check per position (and its
+clearing), re-import, joining the API's positions, no guessing between two
+API positions, rejected rows, fills kept only as totals (exact sums,
+incomplete edge days, repeats kept, no fill coverage), `inspect` and the
+CLI. `tests/unit/trading_dashboard/test_live_dashboard.py` covers the
+demo with web exports: each position once, every export and totals
+finding with its values and sources, no totals finding on a position, the
+balance check unchanged.
 
 `tests/unit/live_history/test_csv_import.py` — number and time parsing,
 column aliases and mapping, export vs API equality, the API-is-primary rule,
@@ -252,9 +304,10 @@ backfill planning and execution, the CLI, and every reconciliation code.
 
 ## Open points for later phases (each needs the owner's go)
 
-- **Before a real import:** an anonymized sample of the exchange's export and,
-  if one exists, of the external journal's export, to confirm the column
-  names, the P/L definition and the fee/funding sign conventions.
+- **Before a real import:** `inspect --layout web_export` on the owner's
+  exchange exports (format only) to confirm they run without rejected rows;
+  then a `--dry-run` into a new real archive outside the repository. The
+  external journal's export format is still unknown.
 - **Phase 5:** the owner creates a **read-only** key (with IP binding if the
   exchange offers it) and enters it in a hidden prompt; it is stored only in
   the OS keyring. One manual sync, checked against the exchange's own UI.

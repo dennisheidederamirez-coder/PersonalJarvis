@@ -20,7 +20,7 @@ import type { TradingLiveFinding } from "@/types/trading";
 import { Empty, Section, SideBadge } from "../parts";
 import { coin, dateTime, toneClass } from "../tradingFormat";
 import { hasKey, type TradingLanguage, type TradingT } from "../tradingI18n";
-import { LiveSourceNotice, OriginTag, ScrollTable, SeverityBadge } from "./liveParts";
+import { isDerivedId, LiveSourceNotice, OriginTag, ScrollTable, SeverityBadge } from "./liveParts";
 
 export function LiveReconciliationTab({
   locale,
@@ -50,7 +50,15 @@ export function LiveReconciliationTab({
 
   function assignment(f: TradingLiveFinding) {
     const lines: string[] = [];
-    if (f.position_id) lines.push(t("live.recon.ref.position", { id: f.position_id }));
+    if (f.position_id) {
+      lines.push(
+        isDerivedId(f.position_id)
+          ? t("live.recon.ref.position_derived", { id: f.position_id.slice(2, 10) })
+          : t("live.recon.ref.position", { id: f.position_id }),
+      );
+    } else if (f.group === "totals") {
+      lines.push(t("live.recon.ref.no_position"));
+    }
     if (f.entry_id) lines.push(t("live.recon.ref.entry", { id: f.entry_id }));
     if (f.fill_ids.length) lines.push(t("live.recon.ref.fills", { ids: f.fill_ids.join(", ") }));
     const times: string[] = [];

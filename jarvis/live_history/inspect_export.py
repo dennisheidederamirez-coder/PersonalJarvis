@@ -31,12 +31,17 @@ from typing import Any, Final
 
 from jarvis.live_history.archive import LiveArchive, Origin, Outcome, RunStatus
 from jarvis.live_history.csv_import import (
+    _ACTIONS,
+    _CONTRACT,
+    _SIZED,
     MAX_FILE_BYTES,
     ImportOptions,
     ImportRefused,
     ImportReport,
+    Layout,
     _delimiter,
     _NeedTimezone,
+    _norm,
     _read_text,
     _RowError,
     import_csv,
@@ -50,7 +55,7 @@ SAMPLE_ROWS: Final = 5000
 #: Issue lines listed in the report (codes are counted in full).
 MAX_LISTED_ISSUES: Final = 25
 _SAFE_HEADER: Final = re.compile(r"^[\w .()/%#:\-\[\]]{1,64}$", re.UNICODE)
-_SIGNED_FIELDS: Final = ("fee", "funding", "pnl")
+_SIGNED_FIELDS: Final = ("fee", "funding", "pnl", "pnl_net")
 
 
 class InsideRepository(Exception):
@@ -94,6 +99,7 @@ def inspect_export(path: Path, opts: ImportOptions, *, now_ms: Callable[[], int]
     st = path.stat()
     out: dict[str, Any] = {
         "kind": opts.kind.value,
+        "layout": opts.layout.value,
         "size_bytes": st.st_size,
         "readable_by_others": bool(st.st_mode & (stat.S_IROTH | stat.S_IRGRP)),
     }
@@ -119,11 +125,13 @@ def inspect_export(path: Path, opts: ImportOptions, *, now_ms: Callable[[], int]
     headers = next(reader, [])
     out["headers"] = [_header(h) for h in headers]
     try:
-        columns = resolve_columns(headers, opts.kind, opts.mapping)
+        columns = resolve_columns(headers, opts.kind, opts.mapping, opts.layout)
         out["mapping"] = {f: _header(headers[i]) for f, i in sorted(columns.items())}
     except ImportRefused as exc:  # reported as mapping_refused; no trial import then
         out["mapping_refused"] = {"code": exc.code.value, "field": exc.field}
         columns = {}
+        if opts.layout is Layout.STANDARD:
+            out["web_export_layout_fits"] = _fits_web_layout(headers, opts)
     mapped = set(columns.values())
     out["unmapped_headers"] = [
         _header(h) for i, h in enumerate(headers) if i not in mapped and h.strip()
@@ -145,6 +153,15 @@ def inspect_export(path: Path, opts: ImportOptions, *, now_ms: Callable[[], int]
                 continue
             if field in ("opened", "closed", "time"):
                 c[_time_class(raw)] += 1
+                continue
+            if field == "contract":
+                c["contract" if _CONTRACT.match(raw) else "unparsed"] += 1
+                continue
+            if field == "action":
+                c[_ACTIONS.get(_norm(raw), "unknown")] += 1
+                continue
+            if field == "qty" and _SIZED.match(raw):
+                c["number_with_unit"] += 1
                 continue
             try:
                 value = parse_decimal(raw, decimal_comma=decimal_comma)
@@ -173,6 +190,7 @@ def inspect_export(path: Path, opts: ImportOptions, *, now_ms: Callable[[], int]
             "pnl_basis": report.pnl_basis.value if report.pnl_basis else None,
             "pnl_basis_source": report.pnl_basis_source,
             "fee_sign_flipped": report.fee_sign_flipped,
+            "matched_by_identity": report.matched_by_identity,
             "issues": report.by_code(),
             "first_issues": [
                 {"line": i.line, "code": i.code.value, "field": i.field}
@@ -183,12 +201,22 @@ def inspect_export(path: Path, opts: ImportOptions, *, now_ms: Callable[[], int]
     return out
 
 
+def _fits_web_layout(headers: list[str], opts: ImportOptions) -> bool:
+    try:
+        resolve_columns(headers, opts.kind, None, Layout.WEB_EXPORT)
+    except ImportRefused:  # the answer is "no"
+        return False
+    return True
+
+
 def _hints(r: dict[str, Any]) -> list[str]:
     hints: list[str] = []
     if r.get("readable_by_others"):
         hints.append("restrict_permissions")  # chmod 600
+    if r.get("web_export_layout_fits"):
+        hints.append("use_layout_web_export")  # --layout web_export
     refused = (r.get("mapping_refused") or {}).get("code")
-    if refused in ("missing_column", "ambiguous_column"):
+    if refused in ("missing_column", "ambiguous_column") and not r.get("web_export_layout_fits"):
         hints.append("map_columns")  # --map field=Header
     trial = r.get("trial_import") or {}
     if trial.get("refused") == "timezone_required":

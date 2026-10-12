@@ -89,7 +89,12 @@ and compared field and the likely cause in words, what it is assigned to
 (symbol, side, position id, journal entry id, summed fills or the two
 balance observations, open/close times), the exchange's value with its
 source tag (API/CSV), the compared value with its source (sum of fills,
-journal name, trade history) and the difference.
+journal name, trade history) and the difference. Exports without ids add
+two groups: **Export** (a position whose export contradicts its own
+components, or whose export copy differs from the API's — the position is
+listed once, with an id marked "no exchange id" when only the export knows
+it) and **Transaction totals** (daily fill totals per symbol, explicitly
+"not assigned to a single position").
 
 **Narrow panes.** LIVE tables keep minimum column widths and scroll sideways
 inside their own frame (the page never does); amounts never wrap; the stat
