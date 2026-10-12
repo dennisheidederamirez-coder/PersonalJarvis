@@ -18,7 +18,9 @@ from fastapi.testclient import TestClient
 from jarvis.core.config import JarvisConfig
 from jarvis.core.config_writer import set_trading_dashboard_live_archive_path
 from jarvis.live_history.archive import LiveArchive
+from jarvis.live_history.csv_import import ImportKind, ImportOptions, Layout, import_csv
 from jarvis.live_history.models import Position, is_derived
+from jarvis.live_history.simulated_venue import SimulatedVenue
 from jarvis.trading_dashboard import live_views as lv
 from jarvis.trading_dashboard.live_reader import LiveArchiveReader, LiveSnapshot
 from jarvis.trading_dashboard.reader import JournalReader, ReadFailure, SourceState
@@ -29,6 +31,8 @@ from tests.fakes.fake_live_archive import (
     DemoArchive,
     build_demo_archive,
 )
+from tests.fakes.fake_live_exports import web_positions_csv
+from tests.fakes.fake_live_venue import NOW_MS
 from tests.fakes.fake_paper_journal import PaperRun, run_paper_test
 
 LIVE = ("overview", "positions", "trades", "costs", "reconciliation", "sources")
@@ -474,10 +478,18 @@ def test_export_findings_name_position_values_and_sources(web_demo: DemoArchive)
         assert f.venue_source == "csv" and f.other_source == "export_components"
         assert f.difference == pytest.approx(float(offset))
         assert f.symbol and f.side and f.opened_ms and f.closed_ms
-    (fee,) = [f for f in export if f.code == "export_differs_from_api"]
-    assert fee.position_id == web_demo.web_changes["export_differs_from_api"][0]
-    assert fee.field == "fee" and fee.venue_source == "api" and fee.other_source == "export"
+    differs = {(f.position_id, f.field): f for f in export if f.code == "export_differs_from_api"}
+    fee = differs.pop((web_demo.web_changes["export_differs_from_api"][0], "fee"))
+    assert fee.venue_source == "api" and fee.other_source == "export"
     assert fee.difference == pytest.approx(-float(WEB_FEE_OFFSET))
+    # where the export contradicted itself its copy uses the stated net, so its realized
+    # P/L differs from the API's by exactly that contradiction; nothing else differs
+    assert set(differs) == {(pid, "realized") for pid in planted}
+    for pid, offset in zip(planted, WEB_NET_OFFSETS, strict=True):
+        assert differs[(pid, "realized")].difference == pytest.approx(-float(offset))
+    # the API's copy is shown, so no position carries the export's replaced gross
+    view = lv.positions(_web_ctx(web_demo), limit=500)
+    assert all(p.realized_original is None for p in [*view.open, *view.closed])
 
 
 def test_fill_totals_are_never_assigned_to_a_position(web_demo: DemoArchive) -> None:
@@ -509,3 +521,42 @@ def test_ambiguous_twins_are_not_folded() -> None:
     assert derived in kept and twins == {}
     kept, twins = _fold_twins((pos("A", 5_000_100), derived))
     assert [p.position_id for p in kept] == ["A"] and twins == {"A": derived}
+
+
+def test_an_export_only_archive_uses_the_stated_net_and_keeps_the_gross(
+    tmp_path: Path,
+) -> None:
+    venue = SimulatedVenue(now_ms=NOW_MS, days=60, closed_positions=12)
+    odd = str(venue.history[3]["positionId"])
+    path = web_positions_csv(venue, tmp_path / "pos.csv", net_offset={odd: Decimal("-44.48")})
+    archive = LiveArchive.open(tmp_path / "live.sqlite", now_ms=NOW_MS, origin="synthetic")
+    try:
+        import_csv(archive, path, ImportOptions(ImportKind.POSITIONS, layout=Layout.WEB_EXPORT),
+                   now_ms=lambda: NOW_MS)  # fmt: skip
+    finally:
+        archive.close()
+    snap = LiveArchiveReader(tmp_path / "live.sqlite").read()
+    assert isinstance(snap, LiveSnapshot)
+    ctx = lv.context(snap, NOW_MS)
+    rec = lv.reconciliation(ctx)
+    # no fills can exist for positions without an exchange id: that notice is gone ...
+    assert "fills_missing" not in rec.counts
+    # ... and the contradiction stays visible
+    (f,) = [x for x in rec.findings if x.code == "export_pnl_inconsistent"]
+    assert f.difference == pytest.approx(-44.48)
+    # totals use the stated net; the export's gross is shown next to the adjusted P/L
+    stated_net = sum(
+        Decimal(p["realizedPNL"]) - Decimal(p["fee"]) + Decimal(p["funding"]) for p in venue.history
+    ) + Decimal("-44.48")
+    o = lv.overview(ctx)
+    assert o.totals.net == pytest.approx(float(stated_net))
+    assert o.totals.fees == pytest.approx(float(sum(Decimal(p["fee"]) for p in venue.history)))
+    assert o.totals.funding == pytest.approx(
+        float(sum(Decimal(p["funding"]) for p in venue.history))
+    )
+    view = lv.positions(ctx, limit=500)
+    adjusted = [p for p in view.closed if p.realized_original is not None]
+    (one,) = adjusted
+    gross = next(Decimal(p["realizedPNL"]) for p in venue.history if str(p["positionId"]) == odd)
+    assert one.realized_original == pytest.approx(float(gross))
+    assert one.realized == pytest.approx(float(gross) - 44.48)

@@ -469,6 +469,9 @@ class LivePosition(BaseModel):
     """api / csv — where the stored copy came from."""
     findings: list[str]
     """Reconciliation codes that concern this position."""
+    realized_original: float | None = None
+    """When the export contradicted itself: its own gross P/L, replaced by the
+    one its stated net implies (``realized``); kept for control."""
 
 
 class LivePositionsView(BaseModel):

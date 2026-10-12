@@ -378,7 +378,9 @@
       "findings": "Reconciliation",
       "count": "{shown} of {total}",
       "more": "Load older",
-      "derived_id": "no exchange id"
+      "derived_id": "no exchange id",
+      "realized_original": "adjusted · export gross {value}",
+      "realized_original_hint": "The export's net is authoritative; its original position P/L is kept for control."
     },
     "origin": {
       "api": "API",
@@ -498,7 +500,7 @@
         "journal": "Journal {journal}",
         "trade_history": "Explained by trades, fees, funding",
         "export": "Export (no ids)",
-        "export_components": "Gross − fee + funding (export)",
+        "export_components": "from original gross − fee + funding",
         "fill_totals": "Daily totals, transaction export"
       },
       "ref": {
@@ -525,7 +527,7 @@
         "funding_mismatch": "The journal's funding differs from the exchange's. Common cause: the journal does not record funding, or records it with the opposite sign.",
         "pnl_mismatch": "The journal's P/L differs from the exchange's. Both values are converted to the journal's definition: {basis}.",
         "unexplained_balance_change": "Between two observations the balance changed by more than trades, fees and funding explain – e.g. a deposit, withdrawal, transfer or bonus.",
-        "export_pnl_inconsistent": "In the position export, the stated net result is not position P/L − fee + funding of the same row. The position P/L (gross) is archived; the difference stays visible until it is explained. Possible causes: a liquidation, a partial close, or a fee the export does not list separately.",
+        "export_pnl_inconsistent": "In the position export, the stated net result is not position P/L − fee + funding of the same row. The export's stated net is authoritative for the results (it agrees with the transaction history); the realized result was derived from it. The original position P/L (gross) is kept as a control value and shown in the Positions tab. Possible causes: a liquidation, a partial close, or a fee the export does not list separately.",
         "export_differs_from_api": "The API delivers the same position (same symbol, side and opening second) differently from the export without ids. The API's version is shown and counted; the export's value stands next to it for comparison.",
         "fill_totals_mismatch": "The daily totals of the transaction export (no ids, not assigned to any position) do not match the archive — on fully covered days its API fills, otherwise the realized result of the positions closed in those days. At the edge of a period, a close spread across the boundary can be the cause."
       }

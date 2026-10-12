@@ -24,7 +24,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final
 
-from jarvis.live_history.models import Fill, Position
+from jarvis.live_history.models import Fill, Position, is_derived
 from jarvis.live_history.reconcile import (
     DEFAULT_TOLERANCES,
     Code,
@@ -301,7 +301,22 @@ def _position(snap: LiveSnapshot, p: Position, codes: dict[str, list[str]]) -> s
         closed_ms=p.updated_ms if p.status == "closed" else None,
         origin=_origin(snap, "position", p.position_id),
         findings=sorted(set(codes.get(p.position_id, []))),
+        realized_original=_f(_originals(snap).get(p.position_id)),
     )
+
+
+def _originals(snap: LiveSnapshot) -> dict[str, Decimal]:
+    """Position id → the export's own gross P/L, where the stored one replaced it.
+
+    Only for copies the export wrote: an API record kept its own figure.
+    """
+    return {
+        c.record_key: c.original
+        for c in snap.checks
+        if c.code == Code.EXPORT_PNL_INCONSISTENT.value
+        and c.original is not None
+        and _origin(snap, "position", c.record_key) == "csv"
+    }
 
 
 def positions(
@@ -443,7 +458,12 @@ def _default_journal(snap: LiveSnapshot) -> str | None:
 
 
 def _reconcile(snap: LiveSnapshot, journal: str | None) -> _Recon:
-    out: list[_Hit] = [_Hit("internal", f) for f in check_internal(snap.positions, snap.fills)]
+    # An export without ids cannot carry fills, so "no fills archived" says nothing there.
+    out: list[_Hit] = [
+        _Hit("internal", f)
+        for f in check_internal(snap.positions, snap.fills)
+        if not (f.code is Code.FILLS_MISSING and f.position_id and is_derived(f.position_id))
+    ]
     span: tuple[int, int] | None = None
     basis: str | None = None
     compared = entries_n = matched = 0

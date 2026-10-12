@@ -94,7 +94,9 @@ two groups: **Export** (a position whose export contradicts its own
 components, or whose export copy differs from the API's — the position is
 listed once, with an id marked "no exchange id" when only the export knows
 it) and **Transaction totals** (daily fill totals per symbol, explicitly
-"not assigned to a single position").
+"not assigned to a single position"). Where an export's stated net was
+used instead of its own gross P/L, the Positions tab marks the realized
+figure "adjusted" and shows the export's original gross below it.
 
 **Narrow panes.** LIVE tables keep minimum column widths and scroll sideways
 inside their own frame (the page never does); amounts never wrap; the stat

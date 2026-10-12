@@ -378,7 +378,9 @@
       "findings": "Abgleich",
       "count": "{shown} von {total}",
       "more": "Ältere laden",
-      "derived_id": "ohne Börsen-ID"
+      "derived_id": "ohne Börsen-ID",
+      "realized_original": "angepasst · Export brutto {value}",
+      "realized_original_hint": "Netto laut Export maßgeblich; das ursprüngliche Positions-P/L des Exports bleibt zur Kontrolle erhalten."
     },
     "origin": {
       "api": "API",
@@ -498,7 +500,7 @@
         "journal": "Journal {journal}",
         "trade_history": "Erklärt durch Trades, Gebühren, Funding",
         "export": "Export (ohne IDs)",
-        "export_components": "Brutto − Gebühr + Funding (Export)",
+        "export_components": "aus ursprünglichem Brutto − Gebühr + Funding",
         "fill_totals": "Tagessummen Transaktions-Export"
       },
       "ref": {
@@ -525,7 +527,7 @@
         "funding_mismatch": "Das Funding im Journal weicht vom Funding der Börse ab. Häufige Ursache: Das Journal erfasst Funding nicht oder mit umgekehrtem Vorzeichen.",
         "pnl_mismatch": "Das P/L im Journal weicht vom P/L der Börse ab. Beide Werte sind auf die Definition des Journals umgerechnet: {basis}.",
         "unexplained_balance_change": "Der Kontostand hat sich zwischen zwei Beobachtungen anders verändert, als Trades, Gebühren und Funding erklären – z. B. durch Einzahlung, Auszahlung, Transfer oder Bonus.",
-        "export_pnl_inconsistent": "Im Positions-Export ist das angegebene Netto-Ergebnis nicht gleich Positions-P/L − Gebühr + Funding derselben Zeile. Archiviert wird das Positions-P/L (brutto); die Differenz bleibt sichtbar, bis sie geklärt ist. Mögliche Ursachen: Liquidation, Teilschließung oder eine Gebühr, die der Export nicht einzeln ausweist.",
+        "export_pnl_inconsistent": "Im Positions-Export ist das angegebene Netto-Ergebnis nicht gleich Positions-P/L − Gebühr + Funding derselben Zeile. Maßgeblich für die Ergebnisberechnung ist das Netto laut Export (es stimmt mit der Transaktionshistorie überein); das realisierte Ergebnis wurde daraus abgeleitet. Das ursprüngliche Positions-P/L (brutto) bleibt als Kontrollwert erhalten und steht im Positionen-Tab. Mögliche Ursachen: Liquidation, Teilschließung oder eine Gebühr, die der Export nicht einzeln ausweist.",
         "export_differs_from_api": "Dieselbe Position (gleiches Symbol, gleiche Richtung, gleiche Eröffnungssekunde) liefert die API anders als der Export ohne IDs. Angezeigt und gerechnet wird die API-Version; der Export-Wert steht als Vergleich daneben.",
         "fill_totals_mismatch": "Die Tagessummen aus dem Transaktions-Export (ohne IDs, keiner Position zugeordnet) stimmen nicht mit dem Archiv überein – an voll abgedeckten Tagen mit den Fills der API, sonst mit dem realisierten Ergebnis der in diesen Tagen geschlossenen Positionen. Am Rand eines Zeitraums kann eine über die Grenze verteilte Schließung die Ursache sein."
       }

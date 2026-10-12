@@ -168,8 +168,8 @@ header names and cell shapes with simulated values.
 |---|---|---|
 | Columns | `futures` (symbol · side · margin mode), `opening time`, `average entry price`, `average closing price`, `closed amount` (size + unit), `closed value`, `position pnl` (gross), `realized pnl` (net), `funding fees`, `position fee`, `closed time` | `date`, `side` (Open/Close Long/Short), `coin`, `futures`, `transaction amount`, `average price`, `realized p/l` (gross), `netprofits` (gross − fee), `fee` |
 | Id | Derived: `x:` + digest of symbol, side and opening **second** (`models.derived_position_id`) — a venue holds at most one position per symbol and side opening in the same second; two rows with one identity are a duplicate (identical) or both rejected (different) | None, and none can be derived: two fills in the same second look alike |
-| Stored as | `Position` records; the gross P/L as `realized_pnl` (the venue's definition) | **Only daily totals** per UTC day and symbol (`FillTotal`: fills, opens, closes, fee, realized P/L); never `Fill` records, so never assigned to a position. The file's first and last day are marked incomplete; a complete day replaces a stored one, a partial one never replaces a complete one |
-| Self-check | Stated net = gross − fee + funding, exactly; a row that fails is kept (its gross figure is consistent) and recorded per position in `lh_record_checks` with both values (`pnl_components_mismatch`); a later export that passes clears it | Stated net = gross − fee; failures are reported per line |
+| Stored as | `Position` records; the gross P/L as `realized_pnl` (the venue's definition) — except where the row contradicts itself (below) | **Only daily totals** per UTC day and symbol (`FillTotal`: fills, opens, closes, fee, realized P/L); never `Fill` records, so never assigned to a position. The file's first and last day are marked incomplete; a complete day replaces a stored one, a partial one never replaces a complete one |
+| Self-check | Stated net = gross − fee + funding, exactly. Where a row fails, its **stated net is authoritative** (on the owner's real files it agrees with the fill history, the gross column does not): the stored P/L becomes net + fee − funding, and `lh_record_checks` keeps the stated net, the net the gross implies and the original gross (`pnl_components_mismatch`). A later export that passes clears the check and restores the gross | Stated net = gross − fee; failures are reported per line |
 | Unit | The size's unit must be the symbol's base asset (`unit_mismatch` otherwise) | Same |
 | Repeats | — | Identical rows are kept and named per line (`identical_rows`): without an id a repeat may be a second fill |
 | With the API | A row whose identity matches exactly one position the API delivered is stored under the API's id (`matched_by_identity`); the API stays primary and a differing row is `conflicts_with_api`. Imported **before** a sync, the export's copy stays under its derived id and the dashboard pairs the two copies (see Reconciliation) | `--covers` is not recorded as fill coverage (`coverage_not_recorded`): totals are not fills, and the backfill must still fetch them |
@@ -250,7 +250,11 @@ All findings have a stable code (`reconcile.Code`) for later translation:
   A position archived later (a CSV backfill) but closed before the earlier
   observation is not counted as explaining the change.
 - **Exports without ids:** `export_pnl_inconsistent` — an export's stated
-  net ≠ its own gross − fee + funding (per position, both values);
+  net ≠ its own gross − fee + funding (per position: the stated net that is
+  used, and the net the original gross implies; the original gross is shown
+  next to the adjusted P/L in the Positions tab). `fills_missing` is not
+  reported for positions without an exchange id: such an export cannot
+  carry fills;
   `export_differs_from_api` — the API's copy of a position against the
   export's copy (same symbol, side and opening second, paired only when
   exactly one API position fits), per differing field. The dashboard shows

@@ -192,7 +192,8 @@ export const livePositions: TradingLivePositionsView = {
       "opened_ms": 1789308800000,
       "closed_ms": 1789568000000,
       "origin": "api",
-      "findings": []
+      "findings": [],
+      "realized_original": null
     },
     {
       "position_id": "P000246",
@@ -211,7 +212,8 @@ export const livePositions: TradingLivePositionsView = {
       "opened_ms": 1788720289916,
       "closed_ms": 1788843939748,
       "origin": "api",
-      "findings": []
+      "findings": [],
+      "realized_original": null
     },
     {
       "position_id": "P000239",
@@ -230,7 +232,8 @@ export const livePositions: TradingLivePositionsView = {
       "opened_ms": 1788400630900,
       "closed_ms": 1788449683322,
       "origin": "api",
-      "findings": []
+      "findings": [],
+      "realized_original": null
     },
     {
       "position_id": "P000232",
@@ -249,7 +252,8 @@ export const livePositions: TradingLivePositionsView = {
       "opened_ms": 1788084897484,
       "closed_ms": 1788334991868,
       "origin": "api",
-      "findings": []
+      "findings": [],
+      "realized_original": null
     }
   ],
   "total_closed": 37,
@@ -481,7 +485,7 @@ export const liveReconciliation: TradingLiveReconciliationView = {
   },
   "findings": [
     {
-      "id": "internal:fill_fee_mismatch:P000001::",
+      "id": "internal:fill_fee_mismatch:P000001::::",
       "code": "fill_fee_mismatch",
       "severity": "error",
       "group": "internal",
@@ -509,7 +513,7 @@ export const liveReconciliation: TradingLiveReconciliationView = {
       "ts_ms": null
     },
     {
-      "id": "journal:fee_mismatch:P000176:J-0003:",
+      "id": "journal:fee_mismatch:P000176:J-0003:::",
       "code": "fee_mismatch",
       "severity": "error",
       "group": "journal",
@@ -533,7 +537,7 @@ export const liveReconciliation: TradingLiveReconciliationView = {
       "ts_ms": null
     },
     {
-      "id": "journal:funding_mismatch:P000204:J-0007:",
+      "id": "journal:funding_mismatch:P000204:J-0007:::",
       "code": "funding_mismatch",
       "severity": "error",
       "group": "journal",
@@ -557,7 +561,7 @@ export const liveReconciliation: TradingLiveReconciliationView = {
       "ts_ms": null
     },
     {
-      "id": "journal:pnl_mismatch:P000190:J-0005:",
+      "id": "journal:pnl_mismatch:P000190:J-0005:::",
       "code": "pnl_mismatch",
       "severity": "error",
       "group": "journal",
@@ -581,7 +585,7 @@ export const liveReconciliation: TradingLiveReconciliationView = {
       "ts_ms": null
     },
     {
-      "id": "balance:unexplained_balance_change:::1789827200000",
+      "id": "balance:unexplained_balance_change:::::1789827200000",
       "code": "unexplained_balance_change",
       "severity": "warning",
       "group": "balance",
@@ -605,7 +609,7 @@ export const liveReconciliation: TradingLiveReconciliationView = {
       "ts_ms": 1789827200000
     },
     {
-      "id": "journal:missing_at_venue::J-9999:",
+      "id": "journal:missing_at_venue::J-9999:::",
       "code": "missing_at_venue",
       "severity": "warning",
       "group": "journal",
@@ -629,7 +633,7 @@ export const liveReconciliation: TradingLiveReconciliationView = {
       "ts_ms": null
     },
     {
-      "id": "journal:missing_in_journal:P000183::",
+      "id": "journal:missing_in_journal:P000183::::",
       "code": "missing_in_journal",
       "severity": "warning",
       "group": "journal",
@@ -674,7 +678,8 @@ export const liveSources: TradingLiveSourcesView = {
     "fill": 110,
     "order": 67,
     "balance": 3,
-    "journal_entry": 14
+    "journal_entry": 14,
+    "fill_total": 0
   },
   "runs": [
     {

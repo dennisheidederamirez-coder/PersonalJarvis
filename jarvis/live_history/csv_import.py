@@ -55,9 +55,11 @@ sizes with their unit (``0.5 BTC``), and the P/L twice — gross and net.
 - Its **positions** get a derived id (symbol, side, opening second; see
   ``models.derived_position_id``); a position the API already delivered with
   the same identity is matched to that one instead. The gross P/L is stored;
-  the stated net is checked against gross − fee + funding, and a row that
-  fails keeps its stated and derived value per position
-  (``pnl_components_mismatch``) for the reconciliation to show.
+  the stated net is checked against gross − fee + funding. Where they
+  disagree the **stated net is authoritative** — it agrees with the fill
+  history — so the stored P/L becomes net + fee − funding, and the row's
+  stated net, the net its gross implies and the original gross are kept per
+  position (``pnl_components_mismatch``) for the reconciliation to show.
 - Its **fills** cannot be told apart (two fills in the same second look
   alike) nor assigned to a position, so they are stored only as daily totals
   per symbol (``FillTotal``); identical rows are kept and counted
@@ -1145,16 +1147,20 @@ def _prepare(path: Path, opts: ImportOptions, report: ImportReport, now: int) ->
         # realized = net + fee − funding: without funding the venue's figure is unknowable
         raise ImportRefused(IssueCode.NET_PNL_WITHOUT_FUNDING, "funding")
 
-    checks: dict[int, tuple[Decimal, Decimal]] = {}
+    checks: dict[int, tuple[Decimal, Decimal, Decimal]] = {}
     if opts.layout is Layout.WEB_EXPORT:
         # The export states the net P/L as well: it must equal its own components.
         for row in parsed:
             v = row.values
             if v.get("pnl_net") is None:
                 continue
-            derived = v["pnl"] - v["fee"] + (v.get("funding") or Decimal(0))
+            funding = v.get("funding") or Decimal(0)
+            derived = v["pnl"] - v["fee"] + funding
             if v["pnl_net"] != derived:
-                checks[row.line] = (v["pnl_net"], derived)
+                checks[row.line] = (v["pnl_net"], derived, v["pnl"])
+                if opts.kind is ImportKind.POSITIONS:
+                    # The stated net agrees with the fill history; the gross is the outlier.
+                    v["pnl"] = v["pnl_net"] + v["fee"] - funding
                 report.add(
                     Issue(IssueCode.PNL_COMPONENTS_MISMATCH, Severity.WARNING, row.line, "pnl_net")
                 )
@@ -1201,8 +1207,8 @@ class _Prepared:
     record: Record | FillTotal | tuple[str, JournalEntry]
     #: Record fields the file left empty: a stored value for them is kept.
     unknown: frozenset[str]
-    #: (stated, derived) net P/L when the file contradicts itself
-    check: tuple[Decimal, Decimal] | None = None
+    #: (stated net, net its gross implies, original gross) when the file contradicts itself
+    check: tuple[Decimal, Decimal, Decimal] | None = None
     #: the file states a net P/L that was checked (a passing row clears an old check)
     checked: bool = False
 
@@ -1306,7 +1312,7 @@ def _store(
             record = dataclasses.replace(record, position_id=twin)
             report.matched_by_identity += 1
     if item.checked:
-        stated, derived = item.check if item.check else (None, None)
+        stated, derived, original = item.check if item.check else (None, None, None)
         archive.set_check(
             venue=record.venue,
             account=record.account,
@@ -1315,6 +1321,7 @@ def _store(
             code=Code.EXPORT_PNL_INCONSISTENT.value,
             stated=stated,
             derived=derived,
+            original=original,
             line=item.row.line,
             run_id=run_id,
         )

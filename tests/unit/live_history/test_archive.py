@@ -202,3 +202,27 @@ def test_real_and_synthetic_never_share_an_archive(tmp_path: Path) -> None:
     with pytest.raises(ArchiveError, match="no origin label"):
         LiveArchive.open(real, now_ms=NOW, origin="real")
     assert stored_origin(real) is None and stored_origin(tmp_path / "none.sqlite") is None
+
+
+def test_an_archive_from_before_the_original_column_is_upgraded(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite"
+    LiveArchive.open(path, now_ms=1, origin="synthetic").close()
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE lh_record_checks DROP COLUMN original")  # as first shipped
+    conn.execute(
+        "INSERT INTO lh_record_checks (venue, account, entity, record_key, code, stated,"
+        " derived, line, run_id) VALUES ('primary', 'main', 'position', 'x:1', 'c', '1', '2',"
+        " 5, 1)"
+    )
+    conn.commit()
+    conn.close()
+    # a read-only reader of the old file sees the check without the new value
+    ro = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    (old,) = LiveArchive(ro, str(path)).checks(venue="primary", account="main")
+    ro.close()
+    assert old.original is None and old.stated == 1
+    # opening it for writing adds the column and keeps the row
+    a = LiveArchive.open(path, now_ms=2, origin="synthetic")
+    (kept,) = a.checks(venue="primary", account="main")
+    assert kept.record_key == "x:1" and kept.original is None
+    a.close()

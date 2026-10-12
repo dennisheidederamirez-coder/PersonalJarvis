@@ -75,6 +75,15 @@ export function LivePositionsTab({ locale, t }: { locale: string; t: TradingT })
             </Cell>
             <Cell align="right" className={cn("tabular-nums", toneClass(p.realized))}>
               {amount(p.realized, true)}
+              {p.realized_original !== null ? (
+                <div
+                  className="whitespace-nowrap text-xs text-muted-foreground"
+                  title={t("live.positions.realized_original_hint")}
+                  data-testid="live-realized-original"
+                >
+                  {t("live.positions.realized_original", { value: amount(p.realized_original, true) })}
+                </div>
+              ) : null}
             </Cell>
           </>
         )}

@@ -120,16 +120,28 @@ def test_net_check_names_exactly_the_contradicting_rows(tmp_path: Path) -> None:
     assert report.by_code() == {IssueCode.PNL_COMPONENTS_MISMATCH.value: 2}
     checks = {c.record_key: c for c in archive.checks(venue="primary", account="main")}
     assert set(checks) == {_derived(a), _derived(b)}
+    stored = _positions(archive)
     for p in (a, b):
         c = checks[_derived(p)]
-        components = Decimal(p["realizedPNL"]) - Decimal(p["fee"]) + Decimal(p["funding"])
+        gross, fee, funding = (Decimal(p[k]) for k in ("realizedPNL", "fee", "funding"))
         assert c.code == Code.EXPORT_PNL_INCONSISTENT.value
-        assert c.derived == components
+        assert c.derived == gross - fee + funding  # what the export's gross implies
         assert c.stated - c.derived == offsets[str(p["positionId"])]
-    # a corrected export clears the checks it no longer fails
+        assert c.original == gross  # the export's own gross, kept for control
+        # the stated net is authoritative: the stored P/L is derived from it
+        got = stored[_derived(p)]
+        assert got.net == c.stated and got.realized_pnl == c.stated + fee - funding
+        assert got.fee == fee and got.funding == funding
+    # every other position keeps the export's gross unchanged
+    for p in venue.history:
+        if p not in (a, b):
+            assert stored[_derived(p)].realized_pnl == Decimal(p["realizedPNL"])
+    # a corrected export clears the checks it no longer fails and restores the gross
     fixed = web_positions_csv(venue, tmp_path / "fixed.csv")
-    import_csv(archive, fixed, POSITIONS, now_ms=_now)
+    again = import_csv(archive, fixed, POSITIONS, now_ms=_now)
+    assert again.counts[Outcome.UPDATED] == 2
     assert archive.checks(venue="primary", account="main") == []
+    assert _positions(archive)[_derived(a)].realized_pnl == Decimal(a["realizedPNL"])
 
 
 def test_reimporting_the_same_export_changes_nothing(tmp_path: Path) -> None:

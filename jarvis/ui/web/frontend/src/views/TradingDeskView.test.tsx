@@ -6,6 +6,7 @@ import {
   LIVE_RESPONSES,
   liveMissingSource,
   liveOverview,
+  livePositions,
   liveReconciliation,
 } from "@/components/trading/live/liveFixtures";
 import { RESPONSES, missingSource, overview } from "@/components/trading/testFixtures";
@@ -266,10 +267,28 @@ describe("TradingDeskView — LIVE history", () => {
     const tab = await screen.findByTestId("live-reconciliation");
     expect(within(tab).getAllByTestId("live-finding").length).toBe(2);
     expect(within(tab).getByText("Position ohne Börsen-ID (abgeleitet: 3f2a91c0)")).toBeTruthy(); // i18n-allow: asserts the German default UI text
-    expect(within(tab).getByText("Brutto − Gebühr + Funding (Export)")).toBeTruthy(); // i18n-allow: asserts the German default UI text
+    expect(within(tab).getByText("aus ursprünglichem Brutto − Gebühr + Funding")).toBeTruthy(); // i18n-allow: asserts the German default UI text
     expect(within(tab).getByText("keiner einzelnen Position zugeordnet")).toBeTruthy(); // i18n-allow: asserts the German default UI text
     expect(within(tab).getByText("Tagessummen Transaktions-Export")).toBeTruthy(); // i18n-allow: asserts the German default UI text
     expect(within(tab).queryByText(/^Position x:/)).toBeNull();
+  });
+
+  it("marks a P/L taken from the export's net and keeps its gross for control", async () => {
+    const [first, ...rest] = livePositions.closed;
+    stubFetch({
+      ...RESPONSES,
+      ...LIVE_RESPONSES,
+      "live/positions": {
+        ...livePositions,
+        closed: [{ ...first, realized: -45.6637, realized_original: -1.1837 }, ...rest],
+      },
+    });
+    await openLive();
+    fireEvent.mouseDown(screen.getByTestId("live-tab-positions"));
+    const tab = await screen.findByTestId("live-positions");
+    const marks = within(tab).getAllByTestId("live-realized-original");
+    expect(marks.length).toBe(1);
+    expect(marks[0].textContent).toMatch(/^angepasst · Export brutto -1,1837 USDT$/); // i18n-allow: asserts the German default UI text
   });
 
   it("reads only LIVE routes once in LIVE mode, and only with GET", async () => {

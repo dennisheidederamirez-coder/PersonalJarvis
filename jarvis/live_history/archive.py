@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS lh_record_checks (
     code TEXT NOT NULL,
     stated TEXT NOT NULL,
     derived TEXT NOT NULL,
+    original TEXT,
     line INTEGER,
     run_id INTEGER NOT NULL,
     PRIMARY KEY (venue, account, entity, record_key, code)
@@ -221,7 +222,12 @@ class SyncRun:
 
 @dataclass(frozen=True)
 class RecordCheck:
-    """A record whose source contradicts itself, e.g. stated net ≠ its own components."""
+    """A record whose source contradicts itself, e.g. stated net ≠ its own components.
+
+    ``stated`` is the figure that was used, ``derived`` the one the source's
+    components give, ``original`` the source's own value the record no longer
+    carries (e.g. the gross P/L an export stated next to its net).
+    """
 
     entity: str
     record_key: str
@@ -230,6 +236,7 @@ class RecordCheck:
     derived: Decimal
     line: int | None
     run_id: int
+    original: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -279,6 +286,7 @@ class LiveArchive:
             if tables and "lh_meta" not in tables:
                 raise ArchiveError("this file is not a LIVE archive")
             conn.executescript(_SCHEMA)
+            _migrate(conn)
             meta = dict(conn.execute("SELECT key, value FROM lh_meta").fetchall())
             if not meta:
                 conn.executemany(
@@ -547,6 +555,7 @@ class LiveArchive:
         code: str,
         stated: Decimal | None,
         derived: Decimal | None = None,
+        original: Decimal | None = None,
         line: int | None = None,
         run_id: int,
     ) -> None:
@@ -561,19 +570,25 @@ class LiveArchive:
             return
         self._conn.execute(
             "INSERT OR REPLACE INTO lh_record_checks (venue, account, entity, record_key, code,"
-            " stated, derived, line, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (*ident, decimal_text(stated), decimal_text(derived), line, run_id),
+            " stated, derived, original, line, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                *ident,
+                decimal_text(stated),
+                decimal_text(derived),
+                None if original is None else decimal_text(original),
+                line,
+                run_id,
+            ),
         )
 
     def checks(self, *, venue: str, account: str) -> list[RecordCheck]:
-        rows = self._conn.execute(
-            "SELECT entity, record_key, code, stated, derived, line, run_id FROM lh_record_checks"
-            " WHERE venue = ? AND account = ? ORDER BY entity, record_key, code",
-            (venue, account),
-        ).fetchall()
+        columns = {r[1] for r in self._conn.execute("PRAGMA table_info(lh_record_checks)")}
+        # a read-only reader may meet a file written before the column existed
+        sql = _CHECKS_SQL if "original" in columns else _CHECKS_SQL_OLD
+        rows = self._conn.execute(sql, (venue, account)).fetchall()
         return [
-            RecordCheck(e, k, c, Decimal(st), Decimal(dv), ln, run)
-            for e, k, c, st, dv, ln, run in rows
+            RecordCheck(e, k, c, Decimal(st), Decimal(dv), ln, run, Decimal(o) if o else None)
+            for e, k, c, st, dv, ln, run, o in rows
         ]
 
     # --------------------------------------------------------------- fill totals
@@ -713,6 +728,20 @@ def journal_from_data(data: dict[str, Any]) -> JournalEntry:
             value = Decimal(value)
         kwargs[f.name] = value
     return JournalEntry(**kwargs)
+
+
+_CHECKS_SQL: Final = (
+    "SELECT entity, record_key, code, stated, derived, line, run_id, original"
+    " FROM lh_record_checks WHERE venue = ? AND account = ? ORDER BY entity, record_key, code"
+)
+_CHECKS_SQL_OLD: Final = _CHECKS_SQL.replace(", original", ", NULL")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Columns added after a table first shipped (``CREATE IF NOT EXISTS`` keeps old tables)."""
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(lh_record_checks)")}
+    if "original" not in columns:
+        conn.execute("ALTER TABLE lh_record_checks ADD COLUMN original TEXT")
 
 
 def _fill_total_data(t: FillTotal) -> dict[str, Any]:

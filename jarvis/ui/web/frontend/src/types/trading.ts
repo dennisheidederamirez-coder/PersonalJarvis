@@ -514,6 +514,7 @@ export interface TradingLivePosition {
   closed_ms: number | null;
   origin: string;
   findings: string[];
+  realized_original: number | null;
 }
 
 export interface TradingLivePositionsView {
